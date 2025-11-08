@@ -1,2 +1,2 @@
-# mineEvac-RL
-mineEvac-RL
+pip install "stable-baselines3[extra]" gymnasium
+
