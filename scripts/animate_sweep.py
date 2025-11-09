@@ -30,6 +30,7 @@ from typing import Dict, List, Tuple, Optional
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
+from matplotlib.patches import Circle, Rectangle
 
 try:
     from matplotlib.animation import PillowWriter
@@ -85,7 +86,7 @@ def load_frames(path: str) -> List[dict]:
     return frames
 
 
-def compute_extent(frames: List[dict]) -> Tuple[float, float, float, float]:
+def compute_extent(frames: List[dict], layout_json: Optional[dict]) -> Tuple[float, float, float, float]:
     xs, ys = [], []
     for fr in frames:
         if fr['occ_xy'].size:
@@ -94,16 +95,24 @@ def compute_extent(frames: List[dict]) -> Tuple[float, float, float, float]:
         if fr['res_xy'].size:
             xs.append(fr['res_xy'][:, 0])
             ys.append(fr['res_xy'][:, 1])
-    if not xs:
-        # default extent
-        return 0.0, 1.0, 0.0, 1.0
-    allx = np.concatenate(xs)
-    ally = np.concatenate(ys)
-    xmin, xmax = float(np.nanmin(allx)), float(np.nanmax(allx))
-    ymin, ymax = float(np.nanmin(ally)), float(np.nanmax(ally))
-    # add small margins
-    dx = max(1e-6, (xmax - xmin) * 0.05)
-    dy = max(1e-6, (ymax - ymin) * 0.05)
+    if xs:
+        allx = np.concatenate(xs)
+        ally = np.concatenate(ys)
+        xmin, xmax = float(np.nanmin(allx)), float(np.nanmax(allx))
+        ymin, ymax = float(np.nanmin(ally)), float(np.nanmax(ally))
+    else:
+        xmin = ymin = 0.0
+        xmax = ymax = 1.0
+
+    if layout_json and layout_json.get('frame'):
+        frame = layout_json['frame']
+        xmin = min(xmin, frame['x1'] - 1)
+        xmax = max(xmax, frame['x2'] + 1)
+        ymin = min(ymin, frame['z1'] - 1)
+        ymax = max(ymax, frame['z2'] + 1)
+
+    dx = max(1.0, (xmax - xmin) * 0.05)
+    dy = max(1.0, (ymax - ymin) * 0.05)
     return xmin - dx, xmax + dx, ymin - dy, ymax + dy
 
 
@@ -116,12 +125,78 @@ def load_layout(layout_path: Optional[str]):
         return json.load(f)
 
 
+def _iter_rooms_with_ids(layout: dict):
+    idx = 1
+    for key in ("rooms_top", "rooms_bottom"):
+        for room in layout.get(key, []):
+            yield room, f"R{idx}"
+            idx += 1
+
+
+def _wall_segments(room: dict, door_xs: set):
+    segments = []
+    start = None
+    x0 = room["x"]
+    x1 = room["x"] + room["w"]
+    for x in range(x0, x1):
+        if x in door_xs:
+            if start is not None:
+                segments.append((start, x))
+                start = None
+        else:
+            if start is None:
+                start = x
+    if start is not None:
+        segments.append((start, x1))
+    return segments
+
+
+def _draw_wall_rows(ax, layout: dict):
+    doors = layout.get("doors", {})
+    door_xs = set(doors.get("xs", []))
+    top_z = doors.get("topZ")
+    bottom_z = doors.get("bottomZ")
+    wall_color = "#8B5A2B"
+    if top_z is not None:
+        for room in layout.get("rooms_top", []):
+            for x0, x1 in _wall_segments(room, door_xs):
+                ax.add_patch(Rectangle((x0, top_z), x1 - x0, 1, facecolor=wall_color, edgecolor="none", alpha=0.55))
+    if bottom_z is not None:
+        for room in layout.get("rooms_bottom", []):
+            for x0, x1 in _wall_segments(room, door_xs):
+                ax.add_patch(Rectangle((x0, bottom_z), x1 - x0, 1, facecolor=wall_color, edgecolor="none", alpha=0.55))
+    door_color = "#FFD700"
+    for x in door_xs:
+        if top_z is not None:
+            ax.add_patch(Rectangle((x, top_z), 1, 1, facecolor=door_color, edgecolor="none", alpha=0.9))
+        if bottom_z is not None:
+            ax.add_patch(Rectangle((x, bottom_z), 1, 1, facecolor=door_color, edgecolor="none", alpha=0.9))
+
+
+def _draw_room_labels(ax, layout: dict):
+    for room, label in _iter_rooms_with_ids(layout):
+        cx = room["x"] + room["w"] / 2
+        cz = room["z"] + room["h"] / 2
+        ax.text(
+            cx,
+            cz,
+            label,
+            ha="center",
+            va="center",
+            fontsize=9,
+            color="#111111",
+            bbox=dict(boxstyle="round,pad=0.12", facecolor="white", alpha=0.75, edgecolor="none"),
+            zorder=5,
+        )
+
+
 def animate(path: str, save: str, fps: int, skip: int, trail: int, dpi: int, layout_path: Optional[str]) -> str:
     frames = load_frames(path)
     if not frames:
         raise RuntimeError(f"No frames loaded from {path}")
 
-    xmin, xmax, ymin, ymax = compute_extent(frames)
+    layout_json = load_layout(layout_path)
+    xmin, xmax, ymin, ymax = compute_extent(frames, layout_json)
 
     fig, ax = plt.subplots(figsize=(9, 5.5))
     ax.set_xlim(xmin, xmax)
@@ -132,46 +207,34 @@ def animate(path: str, save: str, fps: int, skip: int, trail: int, dpi: int, lay
     ax.set_ylabel('Y')
 
     # ---- layout overlay ----
-    layout_json = load_layout(layout_path)
     if layout_json:
         # corridor
         corridor = layout_json.get('corridor')
         if corridor:
             cx, cz, cw, ch = corridor['x'], corridor['z'], corridor['w'], corridor['h']
-            rect = plt.Rectangle((cx, cz), cw, ch, facecolor='#F5F5F5', edgecolor='#AAAAAA', alpha=0.4)
+            rect = Rectangle((cx, cz), cw, ch, facecolor='#F5F5F5', edgecolor='#AAAAAA', alpha=0.4)
             ax.add_patch(rect)
         # rooms
         def draw_rooms(key, color_edge):
             for r in layout_json.get(key, []):
                 rx, rz, rw, rh = r['x'], r['z'], r['w'], r['h']
-                room_rect = plt.Rectangle((rx, rz), rw, rh, facecolor='none', edgecolor=color_edge, linewidth=1.2)
+                room_rect = Rectangle((rx, rz), rw, rh, facecolor='none', edgecolor=color_edge, linewidth=1.2)
                 ax.add_patch(room_rect)
         draw_rooms('rooms_top', '#FF8C00')
         draw_rooms('rooms_bottom', '#1E90FF')
-        # doors
-        doors = layout_json.get('doors')
-        if doors and corridor:
-            top_z = doors.get('topZ')
-            bottom_z = doors.get('bottomZ')
-            xs = doors.get('xs', [])
-            # draw small markers at seam locations
-            for x in xs:
-                if top_z is not None:
-                    ax.plot([x-0.6, x+0.6], [top_z-0.2, top_z-0.2], color='green', linewidth=3, alpha=0.9)
-                if bottom_z is not None:
-                    ax.plot([x-0.6, x+0.6], [bottom_z+0.2, bottom_z+0.2], color='green', linewidth=3, alpha=0.9)
-            ax.text(xs[0] if xs else cx, cz+ch+0.8, 'Doors', color='green', fontsize=8, ha='left')
+        _draw_wall_rows(ax, layout_json)
+        _draw_room_labels(ax, layout_json)
         # exits
         frame = layout_json.get('frame')
         if frame and corridor:
             mid_z = corridor['z'] + corridor['h']//2
-            ax.plot(frame['x1'], mid_z, 'go', markersize=6)
-            ax.plot(frame['x2'], mid_z, 'go', markersize=6)
+            ax.add_patch(Circle((frame['x1'], mid_z), radius=0.6, facecolor='lime', edgecolor='green', linewidth=1.5))
+            ax.add_patch(Circle((frame['x2'], mid_z), radius=0.6, facecolor='lime', edgecolor='green', linewidth=1.5))
             ax.text(frame['x1'], mid_z+0.5, 'ExitL', color='green', fontsize=8, ha='center')
             ax.text(frame['x2'], mid_z+0.5, 'ExitR', color='green', fontsize=8, ha='center')
 
-    scat_occ = ax.scatter([], [], c='red', s=8, alpha=0.7, label='occupants')
-    scat_res = ax.scatter([], [], c='blue', s=25, alpha=0.9, label='responders')
+    scat_occ = ax.scatter([], [], s=60, facecolors='none', edgecolors='red', linewidths=1.5, label='occupants')
+    scat_res = ax.scatter([], [], s=80, facecolors='none', edgecolors='blue', linewidths=2.0, label='responders')
     ax.legend(loc='upper right')
 
     # responder trails: rid -> Line2D object and a deque of points
