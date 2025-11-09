@@ -130,15 +130,26 @@ def load_layout_from_json(path: str) -> Layout:
         Exit(id="E_right", position=(frame["x2"], mid_z)),
     ]
 
+    doors = data.get("doors", {})
+    doors_top_z = int(doors.get("topZ", cz + ch))
+    doors_bottom_z = int(doors.get("bottomZ", cz - 1))
+    doors_xs = list(doors.get("xs", []))
+
     layout = Layout(
         name=name,
         rooms=rooms,
         exits=exits,
         corridor_x_range=corridor_x_range,
         corridor_z_range=corridor_z_range,
+        doors_top_z=doors_top_z,
+        doors_bottom_z=doors_bottom_z,
+        doors_xs=doors_xs,
     )
 
-    return layout, data  # 额外把原始 JSON 一起返回，方便 per_room 和可视化
+    if layout.doors_xs and (layout.doors_top_z <= layout.corridor_z_range[0] or layout.doors_bottom_z >= layout.corridor_z_range[1]):
+        print(f"[WARN] door z ranges may be inverted: top_z={layout.doors_top_z} bottom_z={layout.doors_bottom_z} corridor={layout.corridor_z_range}")
+
+    return layout, data
 
 
 # ===================== 可视化：证明确实读到了 JSON =====================

@@ -334,7 +334,12 @@ def main():
     parser.add_argument("--state", default=None, help="Filter by occupant.state (optional)")
     parser.add_argument("--save", default=None, help="If set, save image to this path instead of showing")
     parser.add_argument("--layout", default="layout/baseline.json", help="Layout JSON for drawing walls/doors/exits")
-    parser.add_argument("--entity", choices=["responder", "occupants", "both"], default="responder", help="Which trajectories to aggregate into the heatmap")
+    parser.add_argument(
+        "--entity",
+        choices=["responder", "occupants", "both"],
+        default="both",
+        help="Which trajectories to aggregate into the heatmap",
+    )
     args = parser.parse_args()
 
     xs_o, ys_o, xs_r, ys_r = load_positions(args.path, state_filter=args.state)
