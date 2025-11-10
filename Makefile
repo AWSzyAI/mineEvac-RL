@@ -12,6 +12,11 @@ help:
 	@echo "  report- summarise training/eval logs into log/report.md"
 	@echo "  det   - deterministic two-responder sweep on baseline layout"
 	@echo "  exp   - run deterministic experiments on baseline/layout_A/layout_B"
+	@echo "  train - train MineEvacEnv PPO (best_model saved)"
+	@echo "  show-rl - evaluate best MineEvacEnv PPO and visualize"
+	@echo "  train2 - train 2-responder RL (best_model saved)"
+	@echo "  show-rl2 - evaluate best 2-responder policy and visualize"
+	@echo "  show-best - evaluate best MineEvacEnv PPO (best_model.zip) and visualize"
 	@echo "  clean - remove generated artifacts (logs/models/output/__pycache__)"
 
 run:
@@ -55,3 +60,31 @@ clean:
 	@echo "Cleaning artifacts..."
 	find . -type d -name "__pycache__" -print -exec rm -rf {} + || true
 	rm -rf logs/* models/*  || true
+.PHONY: show-best
+show-best:
+	@echo "Evaluating best MineEvacEnv PPO model (best_model.zip) and generating visuals"
+	$(PYTHON) src/train_ppo_baseline.py --eval-only
+	@echo "Artifacts: output/heatmap.png, output/sweep_anim.gif"
+.PHONY: train show-rl
+train:
+	@echo "Training MineEvacEnv PPO on baseline.json with best-model selection"
+	$(PYTHON) src/train_ppo_baseline.py --timesteps 400000
+	@echo "Models: models/best_model.zip, models/ppo_mine_evac_baseline.zip"
+
+show-rl:
+	@echo "Evaluating best MineEvacEnv PPO model (best_model.zip) and generating visuals"
+	$(PYTHON) src/train_ppo_baseline.py --eval-only
+	@echo "Artifacts: output/heatmap.png, output/sweep_anim.gif"
+
+.PHONY: train2 show-rl2
+train2:
+	@echo "Training two-responder RL policy (TwoResponderEscortEnv) on baseline.json with best-model selection"
+	$(PYTHON) scripts/train_sim_ppo2.py --layout layout/baseline.json --per_room 5 --max_steps 500 --timesteps 400000 --save models/n_r_2.zip --logdir logs/sim_rl2
+	@echo "Models: models/best_model.zip (if present), models/n_r_2.zip"
+
+show-rl2:
+	@echo "Evaluating best available two-responder policy and generating visuals"
+	$(PYTHON) scripts/eval_sim_policy2.py --layout layout/baseline.json --frames logs/policy2_eval_episode.jsonl --save logs/policy2_eval_summary.json
+	$(PYTHON) scripts/visualize_heatmap.py --path logs/policy2_eval_episode.jsonl --layout layout/baseline.json --entity responder --bins 80 --save output/policy2_heatmap.png
+	$(PYTHON) scripts/animate_sweep.py --path logs/policy2_eval_episode.jsonl --layout layout/baseline.json --save output/policy2_sweep.gif --fps 12 --skip 1 --trail 80
+	@echo "Artifacts: output/policy2_heatmap.png, output/policy2_sweep.gif"

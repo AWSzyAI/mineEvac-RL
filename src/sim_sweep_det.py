@@ -97,6 +97,9 @@ class SweepSim:
         mid_z = self.corr_z_min + (self.corr_z_max - self.corr_z_min) // 2
         self.exits = [(frame["x1"], mid_z), (frame["x2"], mid_z)]
 
+        # precompute wall cells (room perimeters), leaving door openings on corridor-facing walls
+        self.wall_cells: Set[Coord] = self._build_wall_cells()
+
         # responders
         self.responders: List[Responder] = [Responder(i, p) for i, p in enumerate(responders_init)]
 
@@ -104,9 +107,16 @@ class SweepSim:
         self.occupants: List[Occupant] = []
         oid = 0
         for room in self.rooms:
-            cx, cz = room.center
-            for k in range(per_room):
-                pos = (cx, cz + (k % 2))
+            for _ in range(per_room):
+                # sample interior, avoid wall cells
+                for _tries in range(100):
+                    rx = int(self.rng.integers(low=room.x1, high=room.x2 + 1))
+                    rz = int(self.rng.integers(low=room.z1, high=room.z2 + 1))
+                    if (rx, rz) not in self.wall_cells:
+                        pos = (rx, rz)
+                        break
+                else:
+                    pos = room.center
                 self.occupants.append(Occupant(id=oid, pos=pos, origin_room=room.id))
                 oid += 1
 
@@ -139,6 +149,9 @@ class SweepSim:
     def valid_step(self, a: Coord, b: Coord) -> bool:
         ax, az = a; bx, bz = b
         if abs(ax - bx) + abs(az - bz) != 1:
+            return False
+        # wall collision
+        if a in self.wall_cells or b in self.wall_cells:
             return False
         in_corr_a = self.in_corridor(a)
         in_corr_b = self.in_corridor(b)
@@ -181,6 +194,27 @@ class SweepSim:
                 q.append(v)
         return None
 
+    def _build_wall_cells(self) -> Set[Coord]:
+        walls: Set[Coord] = set()
+        for room in self.rooms:
+            # horizontal edges
+            for x in range(room.x1, room.x2 + 1):
+                # top wall: only leave door openings on corridor-facing wall
+                if room.z1 == self.top_z and x in self.door_xs:
+                    pass
+                else:
+                    walls.add((x, room.z1))
+                # bottom wall
+                if room.z2 == self.bot_z and x in self.door_xs:
+                    pass
+                else:
+                    walls.add((x, room.z2))
+            # vertical edges (always walls)
+            for z in range(room.z1, room.z2 + 1):
+                walls.add((room.x1, z))
+                walls.add((room.x2, z))
+        return walls
+
     # -------- policy helpers --------
     def room_door_corridor_cell(self, room: Room) -> Coord:
         # choose the doorway x nearest to room center
@@ -212,6 +246,17 @@ class SweepSim:
                 continue
             if resp.path:  # already en route to a room/exit
                 continue
+            # If inside a room with remaining unattached occupants, go to nearest occupant first
+            cur_room = self.room_at(resp.pos)
+            if cur_room is not None:
+                candidates = [o for o in self.occupants if (not o.evacuated) and o.attached_to is None and cur_room.contains(o.pos)]
+                if candidates:
+                    # go to nearest occupant in current room
+                    target_occ = min(candidates, key=lambda o: abs(o.pos[0]-resp.pos[0]) + abs(o.pos[1]-resp.pos[1]))
+                    path = self.shortest_path(resp.pos, target_occ.pos)
+                    if path and len(path) > 1:
+                        resp.path = path[1:]
+                        continue
             # choose closest room door from current position
             best = None
             best_path = None
@@ -255,11 +300,11 @@ class SweepSim:
             room = self.room_at(resp.pos)
             if room is not None and self.room_first_entry[room.id] is None:
                 self.room_first_entry[room.id] = self.t
-                # attach all occupants in this room to this responder (escort mode)
-                for o in self.occupants:
-                    if not o.evacuated and o.attached_to is None and room.contains(o.pos):
-                        o.attached_to = resp.id
 
+            # attach only when responder reaches occupant cell
+            for o in self.occupants:
+                if (not o.evacuated) and o.attached_to is None and o.pos == resp.pos:
+                    o.attached_to = resp.id
             # if escorting and currently in a room, set path towards nearest exit
             if room is not None and self.attached_occupants(resp.id):
                 exit_goal = self.nearest_exit(resp.pos)

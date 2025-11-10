@@ -24,8 +24,9 @@ class RewardConfig:
     needs_remaining_penalty: RewardTerm = field(default_factory=lambda: RewardTerm(False, -0.1))
     # 原地不动的 responder 惩罚
     responder_still_penalty: RewardTerm = field(default_factory=lambda: RewardTerm(True, -0.2))
-    # 探索新格子的奖励
-    new_cell_bonus: RewardTerm = field(default_factory=lambda: RewardTerm(True, 0.5))
+    # 探索新格子的奖励（细分：房间内 vs 走廊内）
+    new_cell_room_bonus: RewardTerm = field(default_factory=lambda: RewardTerm(True, 0.4))
+    new_cell_corridor_bonus: RewardTerm = field(default_factory=lambda: RewardTerm(True, 0.05))
     # 第一次踏入房间的奖励
     room_entry_bonus: RewardTerm = field(default_factory=lambda: RewardTerm(True, 30.0))
     # 成功附着/带上需要救援者的奖励
@@ -40,6 +41,16 @@ class RewardConfig:
     door_cross_bonus: RewardTerm = field(default_factory=lambda: RewardTerm(True, 20.0))
     # 在门口磨蹭的惩罚
     door_idle_penalty: RewardTerm = field(default_factory=lambda: RewardTerm(True, -0.2))
+    # 走廊内每步的小惩罚（防止横向刷新格）
+    corridor_step_penalty: RewardTerm = field(default_factory=lambda: RewardTerm(True, -0.05))
+
+    # Potential-based shaping (new)
+    # 每步朝"最近门洞"曼哈顿距离的改变量（前一时刻距离 - 当前距离），正向为正奖励
+    door_potential: RewardTerm = field(default_factory=lambda: RewardTerm(True, 0.8))
+    # 每步朝"最近未清空房间的内部区域"曼哈顿距离的改变量（前 - 后），正向为正奖励
+    room_potential: RewardTerm = field(default_factory=lambda: RewardTerm(True, 0.5))
+    # 非法移动（撞墙/越界/未对齐门洞而跨区）的更强惩罚
+    invalid_bump_penalty: RewardTerm = field(default_factory=lambda: RewardTerm(True, -0.6))
 
     # Episode termination terms
     # 成功撤离所有人的终局奖励

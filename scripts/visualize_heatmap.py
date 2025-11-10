@@ -154,6 +154,45 @@ def _draw_wall_rows(ax, layout: dict):
             ax.add_patch(Rectangle((x, bottom_z), 1, 1, facecolor=door_color, edgecolor="none", alpha=0.9))
 
 
+def _draw_room_perimeters(ax, layout: dict):
+    """Draw each room's outermost ring of walls.
+
+    - Left/right vertical edges for all rooms
+    - Far horizontal edge (away from corridor) for each room row
+    - Corridor-facing edge is left to _draw_wall_rows to handle door gaps
+    """
+    wall_color = "#8B5A2B"
+    doors = layout.get("doors", {})
+    top_z = doors.get("topZ")
+    bottom_z = doors.get("bottomZ")
+
+    def add_perimeter(room: dict, corridor_side_z: int):
+        rx, rz, rw, rh = room["x"], room["z"], room["w"], room["h"]
+        left_x = rx
+        right_x = rx + rw - 1
+        bottom = rz
+        top = rz + rh - 1
+
+        # vertical edges
+        ax.add_patch(Rectangle((left_x, rz), 1, rh, facecolor=wall_color, edgecolor="none", alpha=0.6))
+        ax.add_patch(Rectangle((right_x, rz), 1, rh, facecolor=wall_color, edgecolor="none", alpha=0.6))
+
+        # horizontal edges, skip corridor-facing side (will be drawn with door gaps)
+        if bottom != corridor_side_z:
+            ax.add_patch(Rectangle((rx, bottom), rw, 1, facecolor=wall_color, edgecolor="none", alpha=0.6))
+        if top != corridor_side_z:
+            ax.add_patch(Rectangle((rx, top), rw, 1, facecolor=wall_color, edgecolor="none", alpha=0.6))
+
+    # top row rooms: corridor-facing edge is at topZ
+    if top_z is not None:
+        for room in layout.get("rooms_top", []):
+            add_perimeter(room, top_z)
+    # bottom row rooms: corridor-facing edge is at bottomZ
+    if bottom_z is not None:
+        for room in layout.get("rooms_bottom", []):
+            add_perimeter(room, bottom_z)
+
+
 def _draw_room_labels(ax, layout: dict):
     for room, label in _iter_rooms_with_ids(layout):
         cx = room["x"] + room["w"] / 2
@@ -203,6 +242,8 @@ def draw_layout(ax, layout: dict):
     _draw_rooms(rooms_top, "orange")
     _draw_rooms(rooms_bottom, "cyan")
 
+    # Draw per-room perimeters first so doors can overlay correctly
+    _draw_room_perimeters(ax, layout)
     _draw_wall_rows(ax, layout)
     _draw_room_labels(ax, layout)
 
@@ -243,6 +284,49 @@ def draw_layout(ax, layout: dict):
 
 
 def _compute_extent(xs_list: List[np.ndarray], ys_list: List[np.ndarray], layout: Optional[dict]):
+    """Return plotting extent [xmin, xmax, ymin, ymax].
+
+    Prefer the tight building bounds (rooms + corridor) so the bottom wall
+    sits flush with the canvas. Fallback to frame if geometry missing, else
+    derive from data with a small margin.
+    """
+    if layout:
+        # Collect geometry bounds from rooms and corridor
+        xs_min = []
+        xs_max = []
+        ys_min = []
+        ys_max = []
+
+        for key in ("rooms_top", "rooms_bottom"):
+            for r in layout.get(key, []) or []:
+                xs_min.append(r["x"])            # cell edge on the left
+                xs_max.append(r["x"] + r["w"])  # right edge beyond last cell
+                ys_min.append(r["z"])            # bottom edge
+                ys_max.append(r["z"] + r["h"])  # top edge beyond last cell
+
+        corr = layout.get("corridor")
+        if corr:
+            xs_min.append(corr["x"])           
+            xs_max.append(corr["x"] + corr["w"]) 
+            ys_min.append(corr["z"])           
+            ys_max.append(corr["z"] + corr["h"]) 
+
+        if xs_min and xs_max and ys_min and ys_max:
+            xmin = float(min(xs_min))
+            xmax = float(max(xs_max))
+            ymin = float(min(ys_min))
+            ymax = float(max(ys_max))
+            return xmin, xmax, ymin, ymax
+
+        # If rooms/corridor absent, fall back to frame
+        if layout.get("frame"):
+            f = layout["frame"]
+            xmin = float(f["x1"])            # left edge of leftmost cell
+            xmax = float(f["x2"] + 1)         # right edge beyond rightmost cell
+            ymin = float(f["z1"])            # bottom edge of bottom cell
+            ymax = float(f["z2"] + 1)         # top edge beyond topmost cell
+            return xmin, xmax, ymin, ymax
+
     xs_all = []
     ys_all = []
     for xs in xs_list:
@@ -251,13 +335,10 @@ def _compute_extent(xs_list: List[np.ndarray], ys_list: List[np.ndarray], layout
     for ys in ys_list:
         if ys.size:
             ys_all.extend([np.nanmin(ys), np.nanmax(ys)])
-    if layout and layout.get("frame"):
-        frame = layout["frame"]
-        xs_all.extend([frame["x1"], frame["x2"]])
-        ys_all.extend([frame["z1"], frame["z2"]])
     xmin, xmax = (float(min(xs_all)), float(max(xs_all))) if xs_all else (0.0, 1.0)
     ymin, ymax = (float(min(ys_all)), float(max(ys_all))) if ys_all else (0.0, 1.0)
-    return xmin, xmax, ymin, ymax
+    # add 1-cell margin when layout is absent
+    return xmin - 1.0, xmax + 1.0, ymin - 1.0, ymax + 1.0
 
 
 def plot_heatmaps(xs_occ, ys_occ, xs_res, ys_res, entity: str, bins: int = 50, save: str = None, layout: Optional[dict] = None):

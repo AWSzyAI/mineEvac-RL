@@ -346,7 +346,8 @@ class MineEvacEnv(gym.Env):
 
         needs_before = sum(1 for o in self.occupants if o.needs_assist and not o.evacuated)
         # 1. 应用 responder 动作
-        responder_moved, new_cell_visit, door_cross_idx = self._apply_action(action)
+        prev_pos = self.responder.position
+        responder_moved, new_cell_visit, door_cross_idx, invalid_bump = self._apply_action(action)
         door_crossed = door_cross_idx is not None
         door_cross_bonus = False
         if door_cross_idx is not None and door_cross_idx not in self.door_cross_rewarded:
@@ -362,7 +363,8 @@ class MineEvacEnv(gym.Env):
                 room_entry_events += 1
             in_uncleared_room = not self.room_cleared[current_room.id]
 
-        far_from_corridor = not self._is_in_corridor(self.responder.position)
+        in_corridor = self._is_in_corridor(self.responder.position)
+        far_from_corridor = not in_corridor
 
         if door_crossed:
             self.door_idle_steps = 0
@@ -426,6 +428,13 @@ class MineEvacEnv(gym.Env):
         terminated, truncated = self._check_done()
 
         # 5. 奖励
+        # Potential shaping: door distance and room interior distance
+        door_potential_delta = 0.0
+        room_potential_delta = 0.0
+        if responder_moved:
+            door_potential_delta = self._door_distance(prev_pos) - self._door_distance(self.responder.position)
+            room_potential_delta = self._room_interior_distance(prev_pos) - self._room_interior_distance(self.responder.position)
+
         reward = self._compute_reward(
             delta_evac=delta_evac,
             rescued_delta=rescued_delta,
@@ -444,6 +453,9 @@ class MineEvacEnv(gym.Env):
             far_from_corridor=far_from_corridor,
             door_cross_bonus=door_cross_bonus,
             door_idle_penalty=door_idle_penalty,
+            door_potential_delta=door_potential_delta,
+            room_potential_delta=room_potential_delta,
+            invalid_bump=invalid_bump,
         )
 
         obs = self._get_obs()
@@ -476,7 +488,7 @@ class MineEvacEnv(gym.Env):
 
     # ------------ 动作实现 ------------
 
-    def _apply_action(self, action: int) -> Tuple[bool, bool, Optional[int]]:
+    def _apply_action(self, action: int) -> Tuple[bool, bool, Optional[int], bool]:
         x, z = self.responder.position
         if action == 1:      # +x
             x += 1
@@ -501,8 +513,10 @@ class MineEvacEnv(gym.Env):
                 # 记录门探索
                 if door_crossed:
                     self.doors_visited.add(door_idx)
-                return True, new_visit, door_idx
-        return False, False, None
+                return True, new_visit, door_idx, False
+        # 非法移动/撞墙：仅当尝试移动（action!=0）且未发生位移时视为撞墙
+        invalid_bump = (action != 0)
+        return False, False, None, invalid_bump
 
     # ------------ 观测构造 ------------
 
@@ -594,9 +608,15 @@ class MineEvacEnv(gym.Env):
                         needs_delta: int,
                         far_from_corridor: bool,
                         door_cross_bonus: bool,
-                        door_idle_penalty: int) -> float:
+                        door_idle_penalty: int,
+                        door_potential_delta: float,
+                        room_potential_delta: float,
+                        invalid_bump: bool) -> float:
         # 基本时间惩罚
         reward = -1.0
+
+        # derive corridor flag from far_from_corridor
+        in_corr = not far_from_corridor
 
         reward = 0.0
         if reward_cfg.time_penalty.enabled:
@@ -615,8 +635,12 @@ class MineEvacEnv(gym.Env):
 
         if reward_cfg.responder_still_penalty.enabled and not responder_moved:
             reward += reward_cfg.responder_still_penalty.weight
-        if reward_cfg.new_cell_bonus.enabled and new_cell_visit:
-            reward += reward_cfg.new_cell_bonus.weight
+        # new-cell bonus: prefer inside rooms, largely suppress in corridor
+        if new_cell_visit:
+            if in_corr and reward_cfg.new_cell_corridor_bonus.enabled:
+                reward += reward_cfg.new_cell_corridor_bonus.weight
+            elif (not in_corr) and reward_cfg.new_cell_room_bonus.enabled:
+                reward += reward_cfg.new_cell_room_bonus.weight
         if reward_cfg.room_entry_bonus.enabled:
             reward += reward_cfg.room_entry_bonus.weight * room_entries
         if reward_cfg.attach_bonus.enabled and attached:
@@ -627,10 +651,20 @@ class MineEvacEnv(gym.Env):
             reward += reward_cfg.needs_delta_bonus.weight * needs_delta
         if reward_cfg.far_from_corridor_bonus.enabled and far_from_corridor:
             reward += reward_cfg.far_from_corridor_bonus.weight
+        if reward_cfg.corridor_step_penalty.enabled and in_corr:
+            reward += reward_cfg.corridor_step_penalty.weight
         if reward_cfg.door_cross_bonus.enabled and door_cross_bonus:
             reward += reward_cfg.door_cross_bonus.weight
         if reward_cfg.door_idle_penalty.enabled and door_idle_penalty > 0:
             reward += reward_cfg.door_idle_penalty.weight * door_idle_penalty
+
+        # Potential shaping
+        if reward_cfg.door_potential.enabled and door_potential_delta != 0.0:
+            reward += reward_cfg.door_potential.weight * door_potential_delta
+        if reward_cfg.room_potential.enabled and room_potential_delta != 0.0:
+            reward += reward_cfg.room_potential.weight * room_potential_delta
+        if reward_cfg.invalid_bump_penalty.enabled and invalid_bump and not responder_moved:
+            reward += reward_cfg.invalid_bump_penalty.weight
 
         if reward_cfg.success_bonus.enabled and terminated:
             reward += reward_cfg.success_bonus.weight
@@ -647,6 +681,34 @@ class MineEvacEnv(gym.Env):
                 reward += reward_cfg.uncleared_penalty.weight * rooms_uncleared
 
         return reward
+
+    # ---------- Potential helpers ----------
+    def _door_distance(self, p: Coord2D) -> float:
+        """Manhattan distance to nearest doorway cell (either side)."""
+        if not self.door_positions:
+            return 0.0
+        return float(min(self._manhattan_distance(p, q) for q in self.door_positions))
+
+    def _room_interior_distance(self, p: Coord2D) -> float:
+        """Manhattan distance to the nearest uncleared room's interior rectangle.
+
+        If all rooms cleared, returns 0.
+        """
+        targets = []
+        for room in self.layout.rooms:
+            if self.room_cleared.get(room.id, False):
+                continue
+            x1, z1, x2, z2 = self.room_interior_bounds.get(room.id, (room.x1, room.z1, room.x2, room.z2))
+            targets.append((x1, z1, x2, z2))
+        if not targets:
+            return 0.0
+        x, z = p
+        def dist_to_rect(rect):
+            rx1, rz1, rx2, rz2 = rect
+            dx = 0 if rx1 <= x <= rx2 else min(abs(x - rx1), abs(x - rx2))
+            dz = 0 if rz1 <= z <= rz2 else min(abs(z - rz1), abs(z - rz2))
+            return dx + dz
+        return float(min(dist_to_rect(r) for r in targets))
 
     def _update_room_clear_status(self) -> Tuple[int, Dict[str, int]]:
         counts = {room.id: 0 for room in self.layout.rooms}

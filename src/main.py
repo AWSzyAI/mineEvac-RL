@@ -220,8 +220,8 @@ def debug_plot_layout(data: dict):
     # 墙 + 门：按 notes
     # alignment:
     #  - corridor z = 16..23
-    #  - rooms_top z = 24..35, 外墙 z = topZ = 24
-    #  - rooms_bottom z = 1..15, 外墙 z = bottomZ = 15
+    #  - rooms_top z = 24..35, 走廊侧外墙 z = topZ = 24
+    #  - rooms_bottom z = 4..15, 走廊侧外墙 z = bottomZ = 15
     if doors is not None:
         topZ = doors["topZ"]
         bottomZ = doors["bottomZ"]
@@ -231,13 +231,50 @@ def debug_plot_layout(data: dict):
         wall_material = data.get("wall", {}).get("material", "white_concrete")
         wall_color = "#8B4513"  # 棕色，看得清楚一点；你也可以用 block_color(wall_material)
 
+        # 先画每个房间“最外圈一圈都是墙”：
+        #  - 左右竖墙：整列都是墙
+        #  - 远侧横墙：远离走廊的一边整行是墙
+        def draw_room_perimeter(room: dict, corridor_side_z: int):
+            rx, rz, rw, rh = room["x"], room["z"], room["w"], room["h"]
+            left_x = rx
+            right_x = rx + rw - 1
+            bottom = rz
+            top = rz + rh - 1
+            # 左右竖墙（门只在走廊侧的一行，不在竖墙上；但若门恰在拐角，跳过走廊侧那个角块）
+            for z in range(rz, rz + rh):
+                if z == corridor_side_z and left_x in door_xs:
+                    pass
+                else:
+                    tile_type[idx_z(z), idx_x(left_x)] = "wall"
+                    tile_color[idx_z(z), idx_x(left_x)] = wall_color
+                if z == corridor_side_z and right_x in door_xs:
+                    pass
+                else:
+                    tile_type[idx_z(z), idx_x(right_x)] = "wall"
+                    tile_color[idx_z(z), idx_x(right_x)] = wall_color
+            # 远侧横墙：避开走廊侧，由 _draw_wall_rows 类逻辑再处理门洞
+            if bottom != corridor_side_z:
+                z = bottom
+                for x in range(rx, rx + rw):
+                    tile_type[idx_z(z), idx_x(x)] = "wall"
+                    tile_color[idx_z(z), idx_x(x)] = wall_color
+            if top != corridor_side_z:
+                z = top
+                for x in range(rx, rx + rw):
+                    tile_type[idx_z(z), idx_x(x)] = "wall"
+                    tile_color[idx_z(z), idx_x(x)] = wall_color
+
+        for r in data["rooms_top"]:
+            draw_room_perimeter(r, topZ)
+        for r in data["rooms_bottom"]:
+            draw_room_perimeter(r, bottomZ)
+
+        # 再画走廊侧墙：门位置留空
         # 上排：在 z = topZ 这一行，房间和走廊之间画墙，门位置留空
         for r in data["rooms_top"]:
             rx, rz, rw, rh = r["x"], r["z"], r["w"], r["h"]
-            # 房间横向 [rx, rx+rw-1]
             for x in range(rx, rx + rw):
                 if x in door_xs:
-                    # 门：不画墙，保持原 tile（房间/走廊），即“空位”
                     continue
                 z = topZ
                 tile_type[idx_z(z), idx_x(x)] = "wall"

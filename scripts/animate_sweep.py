@@ -87,6 +87,41 @@ def load_frames(path: str) -> List[dict]:
 
 
 def compute_extent(frames: List[dict], layout_json: Optional[dict]) -> Tuple[float, float, float, float]:
+    """Return tight extent aligned to layout grid edges.
+
+    Prefer the building geometry (rooms + corridor):
+      [min_x, max_x] x [min_z, max_z]
+    where max_x/max_z are right/top edges (i.e., +1 from the last cell), so
+    1-cell-thick walls on the boundary are fully visible and the bottom wall
+    sits flush with the canvas. If layout is missing, fall back to data with
+    a small symmetric margin.
+    """
+    if layout_json:
+        xs_min, xs_max, ys_min, ys_max = [], [], [], []
+        for key in ('rooms_top', 'rooms_bottom'):
+            for r in layout_json.get(key, []) or []:
+                xs_min.append(r['x'])
+                xs_max.append(r['x'] + r['w'])
+                ys_min.append(r['z'])
+                ys_max.append(r['z'] + r['h'])
+        corr = layout_json.get('corridor')
+        if corr:
+            xs_min.append(corr['x'])
+            xs_max.append(corr['x'] + corr['w'])
+            ys_min.append(corr['z'])
+            ys_max.append(corr['z'] + corr['h'])
+        if xs_min and xs_max and ys_min and ys_max:
+            xmin = float(min(xs_min))
+            xmax = float(max(xs_max))
+            ymin = float(min(ys_min))
+            ymax = float(max(ys_max))
+            return xmin, xmax, ymin, ymax
+        # fallback to frame if present
+        if layout_json.get('frame'):
+            f = layout_json['frame']
+            return float(f['x1']), float(f['x2'] + 1), float(f['z1']), float(f['z2'] + 1)
+
+    # data-driven fallback with small margin
     xs, ys = [], []
     for fr in frames:
         if fr['occ_xy'].size:
@@ -103,17 +138,8 @@ def compute_extent(frames: List[dict], layout_json: Optional[dict]) -> Tuple[flo
     else:
         xmin = ymin = 0.0
         xmax = ymax = 1.0
-
-    if layout_json and layout_json.get('frame'):
-        frame = layout_json['frame']
-        xmin = min(xmin, frame['x1'] - 1)
-        xmax = max(xmax, frame['x2'] + 1)
-        ymin = min(ymin, frame['z1'] - 1)
-        ymax = max(ymax, frame['z2'] + 1)
-
-    dx = max(1.0, (xmax - xmin) * 0.05)
-    dy = max(1.0, (ymax - ymin) * 0.05)
-    return xmin - dx, xmax + dx, ymin - dy, ymax + dy
+    margin = max(1.0, 0.02 * max(xmax - xmin, ymax - ymin))
+    return xmin - margin, xmax + margin, ymin - margin, ymax + margin
 
 
 def load_layout(layout_path: Optional[str]):
@@ -173,6 +199,36 @@ def _draw_wall_rows(ax, layout: dict):
             ax.add_patch(Rectangle((x, bottom_z), 1, 1, facecolor=door_color, edgecolor="none", alpha=0.9))
 
 
+def _draw_room_perimeters(ax, layout: dict):
+    """Draw a 1-cell wall ring around each room (except the corridor-facing side, which is drawn with door gaps)."""
+    wall_color = "#8B5A2B"
+    doors = layout.get("doors", {})
+    top_z = doors.get("topZ")
+    bottom_z = doors.get("bottomZ")
+
+    def add_perimeter(room: dict, corridor_side_z: int):
+        rx, rz, rw, rh = room["x"], room["z"], room["w"], room["h"]
+        left_x = rx
+        right_x = rx + rw - 1
+        bottom = rz
+        top = rz + rh - 1
+        # verticals
+        ax.add_patch(Rectangle((left_x, rz), 1, rh, facecolor=wall_color, edgecolor="none", alpha=0.55))
+        ax.add_patch(Rectangle((right_x, rz), 1, rh, facecolor=wall_color, edgecolor="none", alpha=0.55))
+        # far horizontal
+        if bottom != corridor_side_z:
+            ax.add_patch(Rectangle((rx, bottom), rw, 1, facecolor=wall_color, edgecolor="none", alpha=0.55))
+        if top != corridor_side_z:
+            ax.add_patch(Rectangle((rx, top), rw, 1, facecolor=wall_color, edgecolor="none", alpha=0.55))
+
+    if top_z is not None:
+        for room in layout.get("rooms_top", []):
+            add_perimeter(room, top_z)
+    if bottom_z is not None:
+        for room in layout.get("rooms_bottom", []):
+            add_perimeter(room, bottom_z)
+
+
 def _draw_room_labels(ax, layout: dict):
     for room, label in _iter_rooms_with_ids(layout):
         cx = room["x"] + room["w"] / 2
@@ -222,6 +278,7 @@ def animate(path: str, save: str, fps: int, skip: int, trail: int, dpi: int, lay
                 ax.add_patch(room_rect)
         draw_rooms('rooms_top', '#FF8C00')
         draw_rooms('rooms_bottom', '#1E90FF')
+        _draw_room_perimeters(ax, layout_json)
         _draw_wall_rows(ax, layout_json)
         _draw_room_labels(ax, layout_json)
         # exits

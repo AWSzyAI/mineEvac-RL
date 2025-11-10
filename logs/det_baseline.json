@@ -2,13 +2,13 @@
   "layout": "baseline.json",
   "responders": 2,
   "per_room": 5,
-  "time": 251,
+  "time": 1296,
   "all_evacuated": true,
   "room_order": [
     "R2",
     "R0",
-    "R5",
     "R3",
+    "R5",
     "R4",
     "R1"
   ],
