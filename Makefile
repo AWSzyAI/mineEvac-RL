@@ -41,7 +41,7 @@ report:
 
 det:
 	@echo "Running deterministic sweep on baseline.json with 2 responders"
-	$(PYTHON) src/sim_sweep_det.py --layout layout/baseline.json --responders 2 --per_room 5 --save logs/det_baseline.json --frames logs/det_eval_episode.jsonl
+	$(PYTHON) src/sim_sweep_det.py --layout layout/baseline.json --responders 2 --per_room 5 --save logs/det_baseline.json --frames logs/det_eval_episode.jsonl --delay 0.01 --log-every 50
 	@echo "Saved logs/det_baseline.json"
 
 exp:

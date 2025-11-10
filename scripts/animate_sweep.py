@@ -48,6 +48,19 @@ except Exception:
     PILLOW_AVAILABLE = False
 
 
+# --- Simple ETA mapping: seconds = steps * (cell_m / speed) ---
+# Defaults consistent with deterministic sim mapping (may be adjusted if needed)
+CELL_M = 0.5          # meters per grid cell
+SPEED_SOLO = 0.8      # m/s when not escorting (rough assumption for ETA)
+
+def _format_eta(seconds: float) -> str:
+    seconds = max(0, int(round(seconds)))
+    h = seconds // 3600
+    m = (seconds % 3600) // 60
+    s = seconds % 60
+    return f"{h:02d}:{m:02d}:{s:02d}"
+
+
 def load_frames(path: str) -> List[dict]:
     """Load frames supporting two formats: legacy trajectories.jsonl & eval_episode.jsonl."""
     frames: List[dict] = []
@@ -69,6 +82,14 @@ def load_frames(path: str) -> List[dict]:
                 else:
                     res_xy = np.empty((0, 2))
                     res_id = []
+                # unswept from room_cleared if present
+                unswept = None
+                rc = data.get('room_cleared')
+                if isinstance(rc, dict):
+                    try:
+                        unswept = int(sum(1 for v in rc.values() if not v))
+                    except Exception:
+                        unswept = None
                 frames.append({
                     'time': data.get('t', len(frames)),
                     'occ_xy': occ_xy,
@@ -76,11 +97,15 @@ def load_frames(path: str) -> List[dict]:
                     'res_id': res_id,
                     'reward': data.get('reward'),
                     'cumulative_reward': data.get('cumulative_reward'),
+                    'unswept': unswept,
+                    'eta_seconds': data.get('eta_seconds'),
+                    'eta_hms': data.get('eta_hms'),
                 })
             else:
-                # legacy format
+                # legacy format (deterministic simulator)
                 occ = data.get('occupants', [])
                 occ_xy = np.array([[float(o.get('x', np.nan)), float(o.get('y', np.nan))] for o in occ], dtype=float)
+                occ_evac = [bool(o.get('evacuated', False)) for o in occ]
                 res = data.get('responders', [])
                 res_xy = np.array([[float(r.get('x', np.nan)), float(r.get('y', np.nan))] for r in res], dtype=float)
                 res_id = [r.get('id') for r in res]
@@ -91,6 +116,11 @@ def load_frames(path: str) -> List[dict]:
                     'res_id': res_id,
                     'reward': None,
                     'cumulative_reward': None,
+                    'evac_count': int(sum(1 for e in occ_evac if e)),
+                    'occ_total': int(len(occ_evac)),
+                    'unswept': data.get('unswept'),
+                    'eta_seconds': data.get('eta_seconds'),
+                    'eta_hms': data.get('eta_hms'),
                 })
     return frames
 
@@ -243,14 +273,14 @@ def _draw_room_labels(ax, layout: dict):
             label,
             ha="center",
             va="center",
-            fontsize=9,
-            color="#111111",
-            bbox=dict(boxstyle="round,pad=0.12", facecolor="white", alpha=0.75, edgecolor="none"),
+            fontsize=7,
+            color="#222222",
+            bbox=dict(boxstyle="round,pad=0.08", facecolor="white", alpha=0.7, edgecolor="none"),
             zorder=5,
         )
 
 
-def animate(path: str, save: str, fps: int, skip: int, trail: int, dpi: int, layout_path: Optional[str]) -> str:
+def animate(path: str, save: str, fps: int, skip: int, trail: int, dpi: int, layout_path: Optional[str], cell_m: float, speed_solo: float, summary_path: Optional[str] = None) -> str:
     frames = load_frames(path)
     if not frames:
         raise RuntimeError(f"No frames loaded from {path}")
@@ -267,26 +297,39 @@ def animate(path: str, save: str, fps: int, skip: int, trail: int, dpi: int, lay
         ax.set_box_aspect((ymax - ymin) / (xmax - xmin))
     except Exception:
         pass
-    ax.set_title('Sweep dynamics (layout + reward)')
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
+    # remove axes labels/title to keep canvas tight for animation frames
+    ax.set_title('')
+    ax.set_xlabel('')
+    ax.set_ylabel('')
     # pure white background
     ax.set_facecolor('white')
     fig.patch.set_facecolor('white')
+    # remove ticks/spines and outer margins so content touches canvas
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for sp in ax.spines.values():
+        sp.set_visible(False)
+    try:
+        # small margins; leave a thin band on top for header and a thin band at bottom for footer
+        fig.subplots_adjust(left=0, right=1, bottom=0.06, top=0.97)
+    except Exception:
+        pass
 
     # ---- layout overlay ----
     if layout_json:
-        # corridor
-        corridor = layout_json.get('corridor')
-        if corridor:
-            cx, cz, cw, ch = corridor['x'], corridor['z'], corridor['w'], corridor['h']
-            # no background fill; keep a light outline only
-            rect = Rectangle((cx, cz), cw, ch, facecolor='none', edgecolor='#AAAAAA', linewidth=1.0, alpha=0.8)
-            ax.add_patch(rect)
-        # walls only (no room outlines, no labels)
+        # walls and labels
         _draw_room_perimeters(ax, layout_json)
         _draw_wall_rows(ax, layout_json)
-        # exits intentionally not drawn to keep non-wall cells white
+        _draw_room_labels(ax, layout_json)
+        # small exit labels
+        frame = layout_json.get('frame')
+        corridor = layout_json.get('corridor')
+        if frame and corridor:
+            mid_z = corridor['z'] + corridor['h']//2
+            ax.text(frame['x1']+0.3, mid_z+0.3, 'ExitL', fontsize=6, color='green', ha='left', va='bottom',
+                    bbox=dict(boxstyle='round,pad=0.08', facecolor='white', edgecolor='none', alpha=0.7), zorder=6)
+            ax.text(frame['x2']-0.3, mid_z+0.3, 'ExitR', fontsize=6, color='green', ha='right', va='bottom',
+                    bbox=dict(boxstyle='round,pad=0.08', facecolor='white', edgecolor='none', alpha=0.7), zorder=6)
 
     # live heatmaps (occupants: Reds, responders: Blues) accumulating visits per cell
     # Define a grid aligned to cell edges so 1x1 cells map cleanly to pixels.
@@ -326,10 +369,44 @@ def animate(path: str, save: str, fps: int, skip: int, trail: int, dpi: int, lay
     # live markers as circles centered at cell centers; diameter = cell diagonal (sqrt(2))
     occ_patches = []
     res_patches = []
+    res_texts = []
     radius = math.sqrt(2) / 2.0
     # legend removed to avoid colored lines
 
-    time_text = ax.text(0.02, 0.97, '', transform=ax.transAxes, va='top', ha='left', fontsize=10)
+    # Header text: just above the axes, left-aligned, tightly attached
+    header_text = ax.text(0.005, 1.005, '', transform=ax.transAxes, ha='left', va='bottom', fontsize=10, zorder=20)
+
+    # Footer room order (static): try to load from summary JSON if provided or detect default
+    room_order_str = None
+    summary_json = None
+    cand = summary_path
+    if cand is None:
+        # best-effort default (for det): logs/det_baseline.json next to frames
+        cand = os.path.join(os.path.dirname(path), 'det_baseline.json')
+    try:
+        if cand and os.path.exists(cand):
+            with open(cand, 'r', encoding='utf-8') as sf:
+                summary_json = json.load(sf)
+        if isinstance(summary_json, dict) and isinstance(summary_json.get('room_order'), list):
+            seq = []
+            for x in summary_json['room_order']:
+                # unify to 1-based: R0->R1, R5->R6
+                sx = str(x)
+                if sx.startswith('R'):
+                    try:
+                        k = int(sx[1:]) + 1
+                        sx = f"R{k}"
+                    except Exception:
+                        pass
+                seq.append(sx)
+            room_order_str = ' → '.join(seq)
+    except Exception:
+        room_order_str = None
+
+    footer_text = None
+    if room_order_str:
+        footer_text = ax.text(0.005, -0.055, f"order: {room_order_str}", transform=ax.transAxes, ha='left', va='top', fontsize=9, zorder=20,
+                              bbox=dict(boxstyle='round,pad=0.08', facecolor='white', edgecolor='none', alpha=0.7))
 
     frame_indices = list(range(0, len(frames), max(1, skip)))
 
@@ -347,13 +424,19 @@ def animate(path: str, save: str, fps: int, skip: int, trail: int, dpi: int, lay
             except Exception:
                 pass
         res_patches.clear()
-        time_text.set_text('')
+        for t in res_texts:
+            try:
+                t.remove()
+            except Exception:
+                pass
+        res_texts.clear()
+        header_text.set_text('')
         # reset accumulators and overlay
         heat_occ[:] = 0.0
         heat_res[:] = 0.0
         mix_rgba[:] = 0.0
         pmesh.set_facecolors(mix_rgba.reshape(-1, 4))
-        return pmesh, time_text
+        return pmesh, header_text
 
     def update(idx):
         fr = frames[frame_indices[idx]]
@@ -374,6 +457,12 @@ def animate(path: str, save: str, fps: int, skip: int, trail: int, dpi: int, lay
             except Exception:
                 pass
         res_patches.clear()
+        for t in res_texts:
+            try:
+                t.remove()
+            except Exception:
+                pass
+        res_texts.clear()
         if occ_xy.size:
             centers = occ_xy + 0.5
             for (cx, cy) in centers:
@@ -382,10 +471,14 @@ def animate(path: str, save: str, fps: int, skip: int, trail: int, dpi: int, lay
                 occ_patches.append(c)
         if res_xy.size:
             centers = res_xy + 0.5
-            for (cx, cy) in centers:
+            for (cx, cy), rid in zip(centers, res_id):
                 c = Circle((cx, cy), radius=radius, facecolor='blue', edgecolor='blue', linewidth=0.8, zorder=12.1, alpha=0.9)
                 ax.add_patch(c)
                 res_patches.append(c)
+                # small id label near responder (r1, r2, ...)
+                txt = ax.text(cx, cy-0.35, f"r{int(rid)+1}", fontsize=6, color='blue', ha='center', va='top', zorder=12.2,
+                              bbox=dict(boxstyle='round,pad=0.08', facecolor='white', edgecolor='none', alpha=0.7))
+                res_texts.append(txt)
 
         # accumulate per-cell heat (one count per entity per frame)
         if occ_xy.size:
@@ -415,12 +508,34 @@ def animate(path: str, save: str, fps: int, skip: int, trail: int, dpi: int, lay
         mix_rgba[..., 3] = a
         pmesh.set_facecolors(mix_rgba.reshape(-1, 4))
 
-        # Reward display if available
-        if fr['reward'] is not None:
-            time_text.set_text(f"t={fr['time']}  r={fr['reward']:.2f}  Rsum={fr['cumulative_reward']:.2f}")
+        # ETA in hh:mm:ss: prefer per-frame eta_seconds/eta_hms if present; else fallback to simple mapping
+        eta_secs = fr.get('eta_seconds')
+        eta_hms = fr.get('eta_hms')
+        if eta_hms is None:
+            if eta_secs is None:
+                eta_secs = float(fr['time']) * (cell_m / max(1e-6, speed_solo))
+            eta_str = _format_eta(float(eta_secs))
         else:
-            time_text.set_text(f"t={fr['time']}")
-        return pmesh, time_text
+            eta_str = str(eta_hms)
+        # Header text: RL reward if available; else det stats; always append ETA
+        if fr['reward'] is not None:
+            if fr.get('unswept') is not None:
+                header_text.set_text(f"t={fr['time']}  {eta_str}  r={fr['reward']:.2f}  Rsum={fr['cumulative_reward']:.2f}  unswept={fr['unswept']}")
+            else:
+                header_text.set_text(f"t={fr['time']}  {eta_str}  r={fr['reward']:.2f}  Rsum={fr['cumulative_reward']:.2f}")
+        else:
+            evac = fr.get('evac_count')
+            tot = fr.get('occ_total')
+            uns = fr.get('unswept')
+            if evac is not None and tot is not None and tot > 0:
+                loss = tot - evac
+                if uns is not None:
+                    header_text.set_text(f"t={fr['time']}  {eta_str}  evac={evac}/{tot}  loss={loss}  unswept={uns}")
+                else:
+                    header_text.set_text(f"t={fr['time']}  {eta_str}  evac={evac}/{tot}  loss={loss}")
+            else:
+                header_text.set_text(f"t={fr['time']}  {eta_str}")
+        return pmesh, header_text
 
     ani = FuncAnimation(fig, update, frames=len(frame_indices), init_func=init, interval=max(10, int(1000/max(1,fps))), blit=False)
 
@@ -435,8 +550,6 @@ def animate(path: str, save: str, fps: int, skip: int, trail: int, dpi: int, lay
                 savefig_kwargs={
                     "facecolor": "white",
                     "edgecolor": "none",
-                    "bbox_inches": "tight",
-                    "pad_inches": 0,
                 },
             )
         else:
@@ -448,8 +561,6 @@ def animate(path: str, save: str, fps: int, skip: int, trail: int, dpi: int, lay
                     savefig_kwargs={
                         "facecolor": "white",
                         "edgecolor": "none",
-                        "bbox_inches": "tight",
-                        "pad_inches": 0,
                     },
                 )
             except Exception:
@@ -459,13 +570,31 @@ def animate(path: str, save: str, fps: int, skip: int, trail: int, dpi: int, lay
                 for i in range(len(frame_indices)):
                     update(i)
                     fig.savefig(os.path.join(frames_dir, f'frame_{i:04d}.png'), dpi=dpi)
-        # Also save the final frame as a static heatmap image
+        # Also save three static frames (first, middle, final) as heatmap images.
+        # Each still reflects the cumulative state up to that time (like the GIF),
+        # not just a single isolated frame.
         try:
             if frame_indices:
-                update(len(frame_indices) - 1)
-                png_path = os.path.join(os.path.dirname(save), 'heatmap_traj.png')
-                fig.savefig(png_path, dpi=max(dpi, 200), bbox_inches='tight', pad_inches=0, facecolor='white')
-                print(f"Saved final-frame heatmap to {png_path}")
+                out_dir = os.path.dirname(save)
+                def save_upto(index: int, out_path: str):
+                    # reset state and accumulate up to the given index
+                    init()
+                    for j in range(0, index + 1):
+                        update(j)
+                    fig.savefig(out_path, dpi=max(dpi, 200), bbox_inches='tight', pad_inches=0, facecolor='white')
+
+                first_idx = 0
+                mid_idx = len(frame_indices) // 2
+                last_idx = len(frame_indices) - 1
+
+                first_path = os.path.join(out_dir, 'heatmap_traj_first.png')
+                mid_path = os.path.join(out_dir, 'heatmap_traj_mid.png')
+                last_path = os.path.join(out_dir, 'heatmap_traj.png')
+
+                save_upto(first_idx, first_path)
+                save_upto(mid_idx, mid_path)
+                save_upto(last_idx, last_path)
+                print(f"Saved heatmap frames to {first_path}, {mid_path}, {last_path}")
         except Exception:
             pass
         print(f"Saved animation to {save}")
@@ -486,9 +615,23 @@ def main():
     parser.add_argument('--trail', type=int, default=0, help='Deprecated: trails removed; heatmap used instead')
     parser.add_argument('--dpi', type=int, default=150, help='Output DPI')
     parser.add_argument('--layout', default='layout/baseline.json', help='Layout JSON for overlay')
+    parser.add_argument('--summary', default=None, help='Optional summary JSON (det) to read room_order for footer')
+    parser.add_argument('--cell-m', type=float, default=0.5, help='Grid cell size in meters for ETA mapping (default: 0.5)')
+    parser.add_argument('--speed-solo', type=float, default=0.8, help='Solo speed (m/s) for ETA mapping (default: 0.8)')
     args = parser.parse_args()
 
-    animate(args.path, args.save, fps=args.fps, skip=args.skip, trail=args.trail, dpi=args.dpi, layout_path=args.layout)
+    animate(
+        args.path,
+        args.save,
+        fps=args.fps,
+        skip=args.skip,
+        trail=args.trail,
+        dpi=args.dpi,
+        layout_path=args.layout,
+        cell_m=args.cell_m,
+        speed_solo=args.speed_solo,
+        summary_path=args.summary,
+    )
 
 
 if __name__ == '__main__':

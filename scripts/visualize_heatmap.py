@@ -209,7 +209,7 @@ def draw_layout(ax, layout: dict):
     if not layout:
         return
 
-    # Draw per-room perimeters first so doors can overlay correctly
+    # Draw room perimeters and corridor-facing wall rows (doors create openings)
     _draw_room_perimeters(ax, layout)
     _draw_wall_rows(ax, layout)
     # no labels, no corridor outlines, keep non-wall cells white
