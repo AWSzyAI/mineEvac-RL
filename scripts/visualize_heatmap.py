@@ -19,6 +19,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 from matplotlib.patches import Rectangle
+import math
 
 
 def load_positions(path: str, state_filter: str = None):
@@ -146,12 +147,7 @@ def _draw_wall_rows(ax, layout: dict):
                     edgecolor="none",
                     alpha=0.6,
                 ))
-    door_color = "#FFD700"
-    for x in door_xs:
-        if top_z is not None:
-            ax.add_patch(Rectangle((x, top_z), 1, 1, facecolor=door_color, edgecolor="none", alpha=0.9))
-        if bottom_z is not None:
-            ax.add_patch(Rectangle((x, bottom_z), 1, 1, facecolor=door_color, edgecolor="none", alpha=0.9))
+    # doors left unfilled (white)
 
 
 def _draw_room_perimeters(ax, layout: dict):
@@ -213,74 +209,10 @@ def draw_layout(ax, layout: dict):
     if not layout:
         return
 
-    frame = layout.get("frame")
-    if frame:
-        ax.add_patch(Rectangle(
-            (frame["x1"], frame["z1"]),
-            frame["x2"] - frame["x1"],
-            frame["z2"] - frame["z1"],
-            fill=False,
-            edgecolor="gray",
-            linewidth=1.5,
-            linestyle="--",
-            alpha=0.8,
-        ))
-
-    def _draw_rooms(room_list, color):
-        for room in room_list:
-            ax.add_patch(Rectangle(
-                (room["x"], room["z"]),
-                room["w"],
-                room["h"],
-                fill=False,
-                edgecolor=color,
-                linewidth=1.2,
-            ))
-
-    rooms_top = layout.get("rooms_top", [])
-    rooms_bottom = layout.get("rooms_bottom", [])
-    _draw_rooms(rooms_top, "orange")
-    _draw_rooms(rooms_bottom, "cyan")
-
     # Draw per-room perimeters first so doors can overlay correctly
     _draw_room_perimeters(ax, layout)
     _draw_wall_rows(ax, layout)
-    _draw_room_labels(ax, layout)
-
-    corr = layout.get("corridor")
-    if corr:
-        ax.add_patch(Rectangle(
-            (corr["x"], corr["z"]),
-            corr["w"],
-            corr["h"],
-            fill=False,
-            edgecolor="white",
-            linewidth=1.0,
-            linestyle=":",
-            alpha=0.9,
-        ))
-
-    doors = layout.get("doors", {})
-    doors_xs = doors.get("xs", [])
-    top_z = doors.get("topZ")
-    bottom_z = doors.get("bottomZ")
-
-    corr_mid = None
-    if corr:
-        corr_mid = corr["z"] + corr["h"] / 2
-    elif frame:
-        corr_mid = frame["z1"] + (frame["z2"] - frame["z1"]) / 2
-
-    exits = []
-    if frame and corr_mid is not None:
-        exits = [
-            (frame["x1"], corr_mid),
-            (frame["x2"], corr_mid),
-        ]
-    if exits:
-        xs, ys = zip(*exits)
-        ax.scatter(xs, ys, c="lime", marker="X", s=80, label="Exits")
-        ax.legend(loc="upper right", fontsize="small", frameon=False)
+    # no labels, no corridor outlines, keep non-wall cells white
 
 
 def _compute_extent(xs_list: List[np.ndarray], ys_list: List[np.ndarray], layout: Optional[dict]):
@@ -342,67 +274,90 @@ def _compute_extent(xs_list: List[np.ndarray], ys_list: List[np.ndarray], layout
 
 
 def plot_heatmaps(xs_occ, ys_occ, xs_res, ys_res, entity: str, bins: int = 50, save: str = None, layout: Optional[dict] = None):
-    # 共享 extent
-    datasets = []
-    if entity in ("occupants", "both"):
-        datasets.append(("Occupants (hot)", xs_occ, ys_occ, "hot", "Occupant density (log)"))
-    if entity in ("responder", "both"):
-        datasets.append(("Responder (Blues)", xs_res, ys_res, "Blues", "Responder density (log)"))
+    # Determine integer-aligned grid from layout frame if available, else from data
+    if layout and layout.get("frame"):
+        f = layout["frame"]
+        x1, x2 = int(f["x1"]), int(f["x2"])  # inclusive indices
+        z1, z2 = int(f["z1"]), int(f["z2"])  # inclusive indices
+    else:
+        all_x = np.concatenate([a for a in (xs_occ, xs_res) if a.size]) if xs_occ.size or xs_res.size else np.array([0, 1])
+        all_y = np.concatenate([a for a in (ys_occ, ys_res) if a.size]) if ys_occ.size or ys_res.size else np.array([0, 1])
+        x1, x2 = int(np.floor(np.nanmin(all_x))), int(np.ceil(np.nanmax(all_x)))
+        z1, z2 = int(np.floor(np.nanmin(all_y))), int(np.ceil(np.nanmax(all_y)))
+    W = max(1, x2 - x1 + 1)
+    H = max(1, z2 - z1 + 1)
 
-    if not datasets:
-        raise ValueError("entity must be one of: responder, occupants, both")
-
-    xmin, xmax, ymin, ymax = _compute_extent([d[1] for d in datasets], [d[2] for d in datasets], layout)
-
-    fig, axes = plt.subplots(len(datasets), 1, figsize=(10, 6 if len(datasets) == 1 else 12), sharex=True)
-    if not isinstance(axes, np.ndarray):
-        axes = np.array([axes])
-    fig.subplots_adjust(hspace=0.12)
-
-    vmax = 1.0
-    heat_data = []
-    for _, xs, ys, _, _ in datasets:
+    def accumulate(xs: np.ndarray, ys: np.ndarray) -> np.ndarray:
+        grid = np.zeros((H, W), dtype=np.int32)
         if xs.size and ys.size:
-            heat, _, _ = np.histogram2d(xs, ys, bins=(bins, bins))
-            heat_data.append(heat.T)
-            vmax = max(vmax, heat.max() + 1.0)
-        else:
-            heat_data.append(None)
+            j = np.floor(xs).astype(int) - x1
+            i = np.floor(ys).astype(int) - z1
+            mask = (i >= 0) & (i < H) & (j >= 0) & (j < W)
+            if np.any(mask):
+                np.add.at(grid, (i[mask], j[mask]), 1)
+        return grid
 
-    for ax, (title, _, _, cmap, cbar_label), heat in zip(axes, datasets, heat_data):
-        if heat is not None and np.any(heat):
-            im = ax.imshow(
-                heat + 1.0,
-                origin="lower",
-                cmap=cmap,
-                norm=LogNorm(vmin=1, vmax=vmax),
-                interpolation="nearest",
-                extent=[xmin, xmax, ymin, ymax],
-                aspect="auto",
-            )
-            ax.set_ylim(ymin, ymax)
-            ax.set_xlim(xmin, xmax)
-            cbar = fig.colorbar(
-                im,
-                ax=ax,
-                orientation="horizontal",
-                pad=0.01,
-                fraction=0.05,
-                label=cbar_label,
-            )
-        else:
-            ax.text(0.5, 0.5, "No data", ha="center", va="center")
-        ax.set_title(title)
-        ax.set_xlabel("X Position")
-        ax.set_ylabel("Y Position")
-        ax.set_aspect("equal")
+    show_occ = entity in ("occupants", "both")
+    show_res = entity in ("responder", "both")
+
+    rows = (1 if (show_occ ^ show_res) else 2) if (show_occ and show_res) else 1
+    labels = []
+    grids = []
+    cmaps = []
+    norms = []
+    if show_occ:
+        g = accumulate(xs_occ, ys_occ)
+        grids.append(g)
+        labels.append("Occupants")
+        cmaps.append("Reds")
+        norms.append(LogNorm(vmin=1, vmax=max(1, g.max())))
+    if show_res:
+        g = accumulate(xs_res, ys_res)
+        grids.append(g)
+        labels.append("Responder")
+        cmaps.append("Blues")
+        norms.append(LogNorm(vmin=1, vmax=max(1, g.max())))
+
+    nplots = len(grids)
+    fig, axes = plt.subplots(nplots, 1, figsize=(10, 6 if nplots == 1 else 12), squeeze=False)
+    axes = axes.ravel()
+    # remove all extra margins so cells touch canvas edges
+    fig.subplots_adjust(left=0, right=1, bottom=0, top=1, hspace=0.0)
+
+    x_edges = np.arange(x1, x2 + 2)
+    y_edges = np.arange(z1, z2 + 2)
+
+    for ax, title, g, cmap, norm in zip(axes, labels, grids, cmaps, norms):
+        # use pcolormesh to color every cell; add 1 to show cells with at least 1 visit in log norm
+        vals = g.copy().astype(float)
+        vals[vals == 0] = np.nan  # leave unvisited cells transparent
+        m = ax.pcolormesh(x_edges, y_edges, vals, cmap=cmap, norm=norm, shading='flat', edgecolors='none')
+        ax.set_xlim(x1, x2 + 1)
+        ax.set_ylim(z1, z2 + 1)
+        ax.set_aspect('equal', adjustable='box')
+        try:
+            ax.set_box_aspect((z2 + 1 - z1) / max(1, (x2 + 1 - x1)))
+        except Exception:
+            pass
+        ax.set_facecolor('white')
+        fig.patch.set_facecolor('white')
+        # no ticks or spines; avoid extra padding
+        ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
+        for sp in ax.spines.values():
+            sp.set_visible(False)
         draw_layout(ax, layout)
+        # optional: remove titles/labels to keep edges flush
+        # ax.set_title(title)
+        # ax.set_xlabel('X')
+        # ax.set_ylabel('Y')
+        cbar = fig.colorbar(m, ax=ax, orientation='horizontal', pad=0.01, fraction=0.05)
+        cbar.set_label('Visits (log)')
 
-    plt.suptitle("Trajectories Heatmaps")
+    # plt.suptitle('Trajectories Heatmaps')
 
     if save:
         os.makedirs(os.path.dirname(save), exist_ok=True)
-        plt.savefig(save, dpi=200, bbox_inches="tight")
+        plt.savefig(save, dpi=200, bbox_inches='tight', pad_inches=0, facecolor='white')
         print(f"Saved heatmap to {save}")
     else:
         plt.show()

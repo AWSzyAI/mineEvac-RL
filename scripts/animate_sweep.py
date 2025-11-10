@@ -19,7 +19,15 @@ Usage:
             --path logs/eval_episode.jsonl \
             --layout layout/baseline.json \
             --save output/sweep_anim.gif \
-            --fps 12 --skip 1 --trail 80
+            --fps 12 --skip 1
+
+Notes:
+- Previously, responders drew line trails. This has been replaced by a
+  real‑time per‑cell heatmap: each time a responder/occupant visits a grid
+  cell, that cell's intensity increases.
+- Visual style: a unified grayscale base shows total visit intensity, with
+  semi‑transparent colored overlays indicating entity types (responders: blue,
+  occupants: red). Current frame positions remain as blue/red dots.
 """
 import argparse
 import json
@@ -31,6 +39,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from matplotlib.patches import Circle, Rectangle
+import math
 
 try:
     from matplotlib.animation import PillowWriter
@@ -191,12 +200,7 @@ def _draw_wall_rows(ax, layout: dict):
         for room in layout.get("rooms_bottom", []):
             for x0, x1 in _wall_segments(room, door_xs):
                 ax.add_patch(Rectangle((x0, bottom_z), x1 - x0, 1, facecolor=wall_color, edgecolor="none", alpha=0.55))
-    door_color = "#FFD700"
-    for x in door_xs:
-        if top_z is not None:
-            ax.add_patch(Rectangle((x, top_z), 1, 1, facecolor=door_color, edgecolor="none", alpha=0.9))
-        if bottom_z is not None:
-            ax.add_patch(Rectangle((x, bottom_z), 1, 1, facecolor=door_color, edgecolor="none", alpha=0.9))
+    # doors are left unfilled (white) to keep background clean
 
 
 def _draw_room_perimeters(ax, layout: dict):
@@ -258,9 +262,17 @@ def animate(path: str, save: str, fps: int, skip: int, trail: int, dpi: int, lay
     ax.set_xlim(xmin, xmax)
     ax.set_ylim(ymin, ymax)
     ax.set_aspect('equal', adjustable='box')
+    # keep cells square regardless of figure size
+    try:
+        ax.set_box_aspect((ymax - ymin) / (xmax - xmin))
+    except Exception:
+        pass
     ax.set_title('Sweep dynamics (layout + reward)')
     ax.set_xlabel('X')
     ax.set_ylabel('Y')
+    # pure white background
+    ax.set_facecolor('white')
+    fig.patch.set_facecolor('white')
 
     # ---- layout overlay ----
     if layout_json:
@@ -268,50 +280,80 @@ def animate(path: str, save: str, fps: int, skip: int, trail: int, dpi: int, lay
         corridor = layout_json.get('corridor')
         if corridor:
             cx, cz, cw, ch = corridor['x'], corridor['z'], corridor['w'], corridor['h']
-            rect = Rectangle((cx, cz), cw, ch, facecolor='#F5F5F5', edgecolor='#AAAAAA', alpha=0.4)
+            # no background fill; keep a light outline only
+            rect = Rectangle((cx, cz), cw, ch, facecolor='none', edgecolor='#AAAAAA', linewidth=1.0, alpha=0.8)
             ax.add_patch(rect)
-        # rooms
-        def draw_rooms(key, color_edge):
-            for r in layout_json.get(key, []):
-                rx, rz, rw, rh = r['x'], r['z'], r['w'], r['h']
-                room_rect = Rectangle((rx, rz), rw, rh, facecolor='none', edgecolor=color_edge, linewidth=1.2)
-                ax.add_patch(room_rect)
-        draw_rooms('rooms_top', '#FF8C00')
-        draw_rooms('rooms_bottom', '#1E90FF')
+        # walls only (no room outlines, no labels)
         _draw_room_perimeters(ax, layout_json)
         _draw_wall_rows(ax, layout_json)
-        _draw_room_labels(ax, layout_json)
-        # exits
-        frame = layout_json.get('frame')
-        if frame and corridor:
-            mid_z = corridor['z'] + corridor['h']//2
-            ax.add_patch(Circle((frame['x1'], mid_z), radius=0.6, facecolor='lime', edgecolor='green', linewidth=1.5))
-            ax.add_patch(Circle((frame['x2'], mid_z), radius=0.6, facecolor='lime', edgecolor='green', linewidth=1.5))
-            ax.text(frame['x1'], mid_z+0.5, 'ExitL', color='green', fontsize=8, ha='center')
-            ax.text(frame['x2'], mid_z+0.5, 'ExitR', color='green', fontsize=8, ha='center')
+        # exits intentionally not drawn to keep non-wall cells white
 
-    scat_occ = ax.scatter([], [], s=60, facecolors='none', edgecolors='red', linewidths=1.5, label='occupants')
-    scat_res = ax.scatter([], [], s=80, facecolors='none', edgecolors='blue', linewidths=2.0, label='responders')
-    ax.legend(loc='upper right')
+    # live heatmaps (occupants: Reds, responders: Blues) accumulating visits per cell
+    # Define a grid aligned to cell edges so 1x1 cells map cleanly to pixels.
+    grid_x0 = int(np.floor(xmin))
+    grid_y0 = int(np.floor(ymin))
+    grid_w = int(np.ceil(xmax) - grid_x0)
+    grid_h = int(np.ceil(ymax) - grid_y0)
 
-    # responder trails: rid -> Line2D object and a deque of points
-    trail_deques: Dict[int, deque] = defaultdict(lambda: deque(maxlen=trail))
-    trail_lines: Dict[int, any] = {}
+    # Enforce exact square cells by snapping limits to integer grid edges and locking box aspect
+    ax.set_xlim(grid_x0, grid_x0 + grid_w)
+    ax.set_ylim(grid_y0, grid_y0 + grid_h)
+    try:
+        ax.set_aspect('equal', adjustable='box')
+        ax.set_box_aspect(grid_h / max(1, grid_w))
+    except Exception:
+        pass
+
+    heat_occ = np.zeros((grid_h, grid_w), dtype=np.float32)
+    heat_res = np.zeros((grid_h, grid_w), dtype=np.float32)
+
+    # Single RGBA overlay that accumulates permanently (no fading)
+    # Use pcolormesh so each 1x1 cell is a perfect square fully filled
+    mix_rgba = np.zeros((grid_h, grid_w, 4), dtype=np.float32)
+    x_edges = np.arange(grid_x0, grid_x0 + grid_w + 1)
+    y_edges = np.arange(grid_y0, grid_y0 + grid_h + 1)
+    pmesh = ax.pcolormesh(
+        x_edges,
+        y_edges,
+        np.zeros((grid_h, grid_w), dtype=np.float32),
+        shading='flat',
+        edgecolors='none',
+        zorder=10.0,
+    )
+    pmesh.set_array(None)
+    pmesh.set_facecolors(mix_rgba.reshape(-1, 4))
+
+    # live markers as circles centered at cell centers; diameter = cell diagonal (sqrt(2))
+    occ_patches = []
+    res_patches = []
+    radius = math.sqrt(2) / 2.0
+    # legend removed to avoid colored lines
 
     time_text = ax.text(0.02, 0.97, '', transform=ax.transAxes, va='top', ha='left', fontsize=10)
 
     frame_indices = list(range(0, len(frames), max(1, skip)))
 
     def init():
-        scat_occ.set_offsets(np.empty((0, 2)))
-        scat_res.set_offsets(np.empty((0, 2)))
+        # remove any previous patches
+        for p in occ_patches:
+            try:
+                p.remove()
+            except Exception:
+                pass
+        occ_patches.clear()
+        for p in res_patches:
+            try:
+                p.remove()
+            except Exception:
+                pass
+        res_patches.clear()
         time_text.set_text('')
-        # clear trails
-        for line in trail_lines.values():
-            line.remove()
-        trail_lines.clear()
-        trail_deques.clear()
-        return scat_occ, scat_res, time_text
+        # reset accumulators and overlay
+        heat_occ[:] = 0.0
+        heat_res[:] = 0.0
+        mix_rgba[:] = 0.0
+        pmesh.set_facecolors(mix_rgba.reshape(-1, 4))
+        return pmesh, time_text
 
     def update(idx):
         fr = frames[frame_indices[idx]]
@@ -319,40 +361,66 @@ def animate(path: str, save: str, fps: int, skip: int, trail: int, dpi: int, lay
         res_xy = fr['res_xy']
         res_id = fr['res_id']
 
-        # update scatters
+        # update marker circles (centers at cell centers, diameter = sqrt(2))
+        for p in occ_patches:
+            try:
+                p.remove()
+            except Exception:
+                pass
+        occ_patches.clear()
+        for p in res_patches:
+            try:
+                p.remove()
+            except Exception:
+                pass
+        res_patches.clear()
         if occ_xy.size:
-            scat_occ.set_offsets(occ_xy)
-        else:
-            scat_occ.set_offsets(np.empty((0, 2)))
-
+            centers = occ_xy + 0.5
+            for (cx, cy) in centers:
+                c = Circle((cx, cy), radius=radius, facecolor='red', edgecolor='red', linewidth=0.8, zorder=12.0, alpha=0.9)
+                ax.add_patch(c)
+                occ_patches.append(c)
         if res_xy.size:
-            scat_res.set_offsets(res_xy)
-        else:
-            scat_res.set_offsets(np.empty((0, 2)))
+            centers = res_xy + 0.5
+            for (cx, cy) in centers:
+                c = Circle((cx, cy), radius=radius, facecolor='blue', edgecolor='blue', linewidth=0.8, zorder=12.1, alpha=0.9)
+                ax.add_patch(c)
+                res_patches.append(c)
 
-        # update trails by responder id
-        # ensure we have line objects for each responder id present
-        for rid, pos in zip(res_id, res_xy):
-            if rid is None:
-                # skip if id missing
-                continue
-            dq = trail_deques[rid]
-            dq.append(tuple(pos))
-            xs = [p[0] for p in dq]
-            ys = [p[1] for p in dq]
-            if rid not in trail_lines:
-                (line,) = ax.plot(xs, ys, color='navy', alpha=0.6, linewidth=1.5)
-                trail_lines[rid] = line
-            else:
-                line = trail_lines[rid]
-                line.set_data(xs, ys)
+        # accumulate per-cell heat (one count per entity per frame)
+        if occ_xy.size:
+            # To grid indices (row=i for y, col=j for x)
+            js = np.floor(occ_xy[:, 0]).astype(int) - grid_x0
+            is_ = np.floor(occ_xy[:, 1]).astype(int) - grid_y0
+            mask = (is_ >= 0) & (is_ < grid_h) & (js >= 0) & (js < grid_w)
+            if np.any(mask):
+                np.add.at(heat_occ, (is_[mask], js[mask]), 1.0)
+        if res_xy.size:
+            js = np.floor(res_xy[:, 0]).astype(int) - grid_x0
+            is_ = np.floor(res_xy[:, 1]).astype(int) - grid_y0
+            mask = (is_ >= 0) & (is_ < grid_h) & (js >= 0) & (js < grid_w)
+            if np.any(mask):
+                np.add.at(heat_res, (is_[mask], js[mask]), 1.0)
+
+        # Build a monotonic, non-fading color overlay from absolute visit counts
+        # Scale factors control how fast color deepens; tune as needed.
+        K_OCC = 0.08
+        K_RES = 0.15
+        r = np.clip(heat_occ * K_OCC, 0.0, 1.0)
+        b = np.clip(heat_res * K_RES, 0.0, 1.0)
+        a = np.clip(np.maximum(r, b), 0.0, 1.0)
+        mix_rgba[..., 0] = r
+        mix_rgba[..., 1] = 0.0
+        mix_rgba[..., 2] = b
+        mix_rgba[..., 3] = a
+        pmesh.set_facecolors(mix_rgba.reshape(-1, 4))
 
         # Reward display if available
         if fr['reward'] is not None:
             time_text.set_text(f"t={fr['time']}  r={fr['reward']:.2f}  Rsum={fr['cumulative_reward']:.2f}")
         else:
             time_text.set_text(f"t={fr['time']}")
-        return scat_occ, scat_res, time_text, *trail_lines.values()
+        return pmesh, time_text
 
     ani = FuncAnimation(fig, update, frames=len(frame_indices), init_func=init, interval=max(10, int(1000/max(1,fps))), blit=False)
 
@@ -360,11 +428,30 @@ def animate(path: str, save: str, fps: int, skip: int, trail: int, dpi: int, lay
         os.makedirs(os.path.dirname(save), exist_ok=True)
         if save.lower().endswith('.gif') and PILLOW_AVAILABLE:
             writer = PillowWriter(fps=fps)
-            ani.save(save, writer=writer, dpi=dpi)
+            ani.save(
+                save,
+                writer=writer,
+                dpi=dpi,
+                savefig_kwargs={
+                    "facecolor": "white",
+                    "edgecolor": "none",
+                    "bbox_inches": "tight",
+                    "pad_inches": 0,
+                },
+            )
         else:
             # fallback: try to save as mp4 using default writer; or per-frame PNGs
             try:
-                ani.save(save, dpi=dpi)
+                ani.save(
+                    save,
+                    dpi=dpi,
+                    savefig_kwargs={
+                        "facecolor": "white",
+                        "edgecolor": "none",
+                        "bbox_inches": "tight",
+                        "pad_inches": 0,
+                    },
+                )
             except Exception:
                 # last resort: dump frames
                 frames_dir = os.path.join(os.path.dirname(save), 'frames')
@@ -372,6 +459,15 @@ def animate(path: str, save: str, fps: int, skip: int, trail: int, dpi: int, lay
                 for i in range(len(frame_indices)):
                     update(i)
                     fig.savefig(os.path.join(frames_dir, f'frame_{i:04d}.png'), dpi=dpi)
+        # Also save the final frame as a static heatmap image
+        try:
+            if frame_indices:
+                update(len(frame_indices) - 1)
+                png_path = os.path.join(os.path.dirname(save), 'heatmap_traj.png')
+                fig.savefig(png_path, dpi=max(dpi, 200), bbox_inches='tight', pad_inches=0, facecolor='white')
+                print(f"Saved final-frame heatmap to {png_path}")
+        except Exception:
+            pass
         print(f"Saved animation to {save}")
     else:
         plt.show()
@@ -386,7 +482,8 @@ def main():
     parser.add_argument('--save', default='output/sweep_anim.gif', help='Output GIF/MP4 path')
     parser.add_argument('--fps', type=int, default=12, help='Frames per second')
     parser.add_argument('--skip', type=int, default=1, help='Use every Nth frame to speed up')
-    parser.add_argument('--trail', type=int, default=60, help='Responder trail length (frames)')
+    # trail kept for backward CLI compatibility; ignored (heatmap replaces tails)
+    parser.add_argument('--trail', type=int, default=0, help='Deprecated: trails removed; heatmap used instead')
     parser.add_argument('--dpi', type=int, default=150, help='Output DPI')
     parser.add_argument('--layout', default='layout/baseline.json', help='Layout JSON for overlay')
     args = parser.parse_args()

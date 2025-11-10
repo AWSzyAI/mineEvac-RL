@@ -20,13 +20,13 @@ class RewardConfig:
     self_evac_bonus: RewardTerm = field(default_factory=lambda: RewardTerm(True, 0.0))
     # 房间完全清空奖励
     room_clear_bonus: RewardTerm = field(default_factory=lambda: RewardTerm(True, 150.0))
-    # 尚未处理完的需求数量惩罚
-    needs_remaining_penalty: RewardTerm = field(default_factory=lambda: RewardTerm(False, -0.1))
+    # 尚未处理完的需求数量惩罚（逐步，弱）
+    needs_remaining_penalty: RewardTerm = field(default_factory=lambda: RewardTerm(True, -0.05))
     # 原地不动的 responder 惩罚
     responder_still_penalty: RewardTerm = field(default_factory=lambda: RewardTerm(True, -0.2))
     # 探索新格子的奖励（细分：房间内 vs 走廊内）
-    new_cell_room_bonus: RewardTerm = field(default_factory=lambda: RewardTerm(True, 0.4))
-    new_cell_corridor_bonus: RewardTerm = field(default_factory=lambda: RewardTerm(True, 0.05))
+    new_cell_room_bonus: RewardTerm = field(default_factory=lambda: RewardTerm(True, 0.8))
+    new_cell_corridor_bonus: RewardTerm = field(default_factory=lambda: RewardTerm(True, 0.1))
     # 第一次踏入房间的奖励
     room_entry_bonus: RewardTerm = field(default_factory=lambda: RewardTerm(True, 30.0))
     # 成功附着/带上需要救援者的奖励
@@ -46,9 +46,11 @@ class RewardConfig:
 
     # Potential-based shaping (new)
     # 每步朝"最近门洞"曼哈顿距离的改变量（前一时刻距离 - 当前距离），正向为正奖励
-    door_potential: RewardTerm = field(default_factory=lambda: RewardTerm(True, 0.8))
+    door_potential: RewardTerm = field(default_factory=lambda: RewardTerm(True, 0.6))
     # 每步朝"最近未清空房间的内部区域"曼哈顿距离的改变量（前 - 后），正向为正奖励
     room_potential: RewardTerm = field(default_factory=lambda: RewardTerm(True, 0.5))
+    # 朝最近“未访问格子”的曼哈顿距离改变量（前 - 后），正向为正奖励
+    unvisited_potential: RewardTerm = field(default_factory=lambda: RewardTerm(True, 0.6))
     # 非法移动（撞墙/越界/未对齐门洞而跨区）的更强惩罚
     invalid_bump_penalty: RewardTerm = field(default_factory=lambda: RewardTerm(True, -0.6))
 
@@ -56,11 +58,11 @@ class RewardConfig:
     # 成功撤离所有人的终局奖励
     success_bonus: RewardTerm = field(default_factory=lambda: RewardTerm(True, 200.0))
     # 时间被截断（失败）时的惩罚
-    truncation_penalty: RewardTerm = field(default_factory=lambda: RewardTerm(True, -200.0))
-    # 终局剩余 occupants 惩罚
-    remaining_penalty: RewardTerm = field(default_factory=lambda: RewardTerm(True, -10.0))
-    # 终局未清空房间数量的惩罚
-    uncleared_penalty: RewardTerm = field(default_factory=lambda: RewardTerm(True, -4.0))
+    truncation_penalty: RewardTerm = field(default_factory=lambda: RewardTerm(True, -100.0))
+    # 终局剩余 occupants 惩罚（弱化）
+    remaining_penalty: RewardTerm = field(default_factory=lambda: RewardTerm(True, -2.0))
+    # 终局未清空房间数量的惩罚（弱化）
+    uncleared_penalty: RewardTerm = field(default_factory=lambda: RewardTerm(True, -1.0))
 
 
 reward_cfg = RewardConfig()

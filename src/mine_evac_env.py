@@ -256,6 +256,10 @@ class MineEvacEnv(gym.Env):
         self.total_needy: int = 0
         self.occupant_vis_radius = 2  # 5x5 sensing window
         self.visited_cells: Set[Coord2D] = set()
+        # 热力与可行走集合（用于探索/覆盖率）
+        self.heat_responder: Dict[Coord2D, int] = {}
+        self.heat_occupant: Dict[Coord2D, int] = {}
+        self.walkable_cells: Set[Coord2D] = set()
         self.door_half_width = 1  # allow 3-cell wide openings for easier room entry
         self.door_x_index_map = self._build_door_index_map()
         self.door_open_xs = set(self.door_x_index_map.keys())
@@ -284,12 +288,13 @@ class MineEvacEnv(gym.Env):
         self.action_space = spaces.Discrete(5)
 
         # ----- 观测空间 -----
-        # obs = [base(8 + carrying + vis_norm=10), per_room(3)*N, visited_room_flags(N), door_flags(D)]
+        # obs = [base(13: pos2 + evac + needs + rooms_cleared + t + door_vec2 + carrying + vis_norm + coverage + unvisited_vec2),
+        #        per_room(3)*N, visited_room_flags(N), door_flags(D)]
         self.num_rooms = len(self.layout.rooms)
         self.num_doors = len(self.layout.doors_xs)
         self.per_room_feature_dim = 3
-        # base: x_norm,z_norm,evac_ratio,needs_ratio,rooms_cleared_ratio,t_norm,door_dx,door_dz,carrying_flag,vis_norm => 10
-        obs_dim = 10 + self.num_rooms * self.per_room_feature_dim + self.num_rooms + self.num_doors
+        # base(13): x_norm,z_norm,evac_ratio,needs_ratio,rooms_cleared_ratio,t_norm,door_dx,door_dz,carrying_flag,vis_norm,coverage_ratio,unvisited_dx,unvisited_dz
+        obs_dim = 13 + self.num_rooms * self.per_room_feature_dim + self.num_rooms + self.num_doors
         low = np.zeros(obs_dim, dtype=np.float32)
         high = np.ones(obs_dim, dtype=np.float32)
         self.observation_space = spaces.Box(low=low, high=high, dtype=np.float32)
@@ -333,6 +338,24 @@ class MineEvacEnv(gym.Env):
         self.door_cross_rewarded = set()
         self.door_idle_steps = 0
 
+        # 初始化热力与可行走集合
+        self.heat_responder = {self.responder.position: 1}
+        self.heat_occupant = {}
+        self.walkable_cells = set()
+        # 走廊范围内可行走格
+        x_min, x_max = self.layout.corridor_x_range
+        z_min, z_max = self.layout.corridor_z_range
+        for x in range(x_min, x_max + 1):
+            for z in range(z_min, z_max + 1):
+                if (x, z) not in self.wall_cells:
+                    self.walkable_cells.add((x, z))
+        # 各房间内部可行走格（排除墙体）
+        for room in self.layout.rooms:
+            for x in range(room.x1, room.x2 + 1):
+                for z in range(room.z1, room.z2 + 1):
+                    if (x, z) not in self.wall_cells:
+                        self.walkable_cells.add((x, z))
+
         obs = self._get_obs()
         info = {}
         return obs, info
@@ -347,6 +370,8 @@ class MineEvacEnv(gym.Env):
         needs_before = sum(1 for o in self.occupants if o.needs_assist and not o.evacuated)
         # 1. 应用 responder 动作
         prev_pos = self.responder.position
+        # exploration shaping pre-state
+        prev_unvisited_dist = self._unvisited_distance(prev_pos)
         responder_moved, new_cell_visit, door_cross_idx, invalid_bump = self._apply_action(action)
         door_crossed = door_cross_idx is not None
         door_cross_bonus = False
@@ -423,6 +448,11 @@ class MineEvacEnv(gym.Env):
         needs_remaining = sum(1 for o in self.occupants if o.needs_assist and not o.evacuated)
         needs_delta = max(0, needs_before - needs_remaining)
 
+        # 累计 occupants 热力（每个未撤离者当前位置 +1）
+        for o in self.occupants:
+            if not o.evacuated:
+                self.heat_occupant[o.position] = self.heat_occupant.get(o.position, 0) + 1
+
         # 4. 房间清空状态 & 终止条件
         newly_cleared_rooms, room_counts = self._update_room_clear_status()
         terminated, truncated = self._check_done()
@@ -434,6 +464,11 @@ class MineEvacEnv(gym.Env):
         if responder_moved:
             door_potential_delta = self._door_distance(prev_pos) - self._door_distance(self.responder.position)
             room_potential_delta = self._room_interior_distance(prev_pos) - self._room_interior_distance(self.responder.position)
+        # exploration potential: towards nearest unvisited walkable cell
+        unvisited_potential_delta = 0.0
+        if responder_moved:
+            now_unvisited = self._unvisited_distance(self.responder.position)
+            unvisited_potential_delta = float(prev_unvisited_dist - now_unvisited)
 
         reward = self._compute_reward(
             delta_evac=delta_evac,
@@ -455,6 +490,7 @@ class MineEvacEnv(gym.Env):
             door_idle_penalty=door_idle_penalty,
             door_potential_delta=door_potential_delta,
             room_potential_delta=room_potential_delta,
+            unvisited_potential_delta=unvisited_potential_delta,
             invalid_bump=invalid_bump,
         )
 
@@ -510,6 +546,8 @@ class MineEvacEnv(gym.Env):
                 self.responder.position = new_pos
                 if new_visit:
                     self.visited_cells.add(new_pos)
+                # 热力累计（每步+1）
+                self.heat_responder[new_pos] = self.heat_responder.get(new_pos, 0) + 1
                 # 记录门探索
                 if door_crossed:
                     self.doors_visited.add(door_idx)
@@ -541,6 +579,9 @@ class MineEvacEnv(gym.Env):
         t_norm = min(1.0, self.t / self.max_steps)
 
         door_dx, door_dz = self._nearest_door_vector((x_r, z_r))
+        # 覆盖率与最近未访问向量
+        coverage_ratio = len(self.visited_cells) / max(1, len(self.walkable_cells))
+        uv_dx, uv_dz = self._nearest_unvisited_vector((x_r, z_r))
 
         room_features = []
         span_x = max(1, (x_max - x_min))
@@ -568,7 +609,7 @@ class MineEvacEnv(gym.Env):
                 door_flags[d] = 1.0
         obs = np.concatenate(
             [
-                np.array([x_norm, z_norm, evac_ratio, needs_ratio, rooms_cleared_ratio, t_norm, door_dx, door_dz, carrying_flag, vis_norm], dtype=np.float32),
+                np.array([x_norm, z_norm, evac_ratio, needs_ratio, rooms_cleared_ratio, t_norm, door_dx, door_dz, carrying_flag, vis_norm, coverage_ratio, uv_dx, uv_dz], dtype=np.float32),
                 np.array(room_features, dtype=np.float32),
                 visited,
                 door_flags,
@@ -611,6 +652,7 @@ class MineEvacEnv(gym.Env):
                         door_idle_penalty: int,
                         door_potential_delta: float,
                         room_potential_delta: float,
+                        unvisited_potential_delta: float,
                         invalid_bump: bool) -> float:
         # 基本时间惩罚
         reward = -1.0
@@ -665,6 +707,10 @@ class MineEvacEnv(gym.Env):
             reward += reward_cfg.room_potential.weight * room_potential_delta
         if reward_cfg.invalid_bump_penalty.enabled and invalid_bump and not responder_moved:
             reward += reward_cfg.invalid_bump_penalty.weight
+
+        # 未访问格子势能：靠近未探索区域给正奖励
+        if reward_cfg.unvisited_potential.enabled and unvisited_potential_delta != 0.0:
+            reward += reward_cfg.unvisited_potential.weight * unvisited_potential_delta
 
         if reward_cfg.success_bonus.enabled and terminated:
             reward += reward_cfg.success_bonus.weight
@@ -1037,3 +1083,32 @@ class MineEvacEnv(gym.Env):
                 self.responder.carrying = o.id
                 return True
         return False
+
+    # ---------- Exploration helpers ----------
+    def _unvisited_distance(self, p: Coord2D) -> int:
+        """Manhattan distance to the nearest unvisited walkable cell.
+        Returns 0 when none are left.
+        """
+        if not self.walkable_cells:
+            return 0
+        unvisited = self.walkable_cells - self.visited_cells
+        if not unvisited:
+            return 0
+        x, z = p
+        return int(min(abs(x - qx) + abs(z - qz) for (qx, qz) in unvisited))
+
+    def _nearest_unvisited_vector(self, p: Coord2D) -> Tuple[float, float]:
+        if not self.walkable_cells:
+            return 0.0, 0.0
+        unvisited = self.walkable_cells - self.visited_cells
+        if not unvisited:
+            return 0.0, 0.0
+        x, z = p
+        target = min(unvisited, key=lambda q: abs(q[0]-x) + abs(q[1]-z))
+        x_min, x_max = self.layout.corridor_x_range
+        z_min, z_max = self.layout.corridor_z_range
+        span_x = max(1, (x_max - x_min))
+        span_z = max(1, (z_max - z_min))
+        dx = (target[0] - x) / span_x
+        dz = (target[1] - z) / span_z
+        return float(dx), float(dz)
