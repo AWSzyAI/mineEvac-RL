@@ -59,7 +59,7 @@ det-gif:
 clean:
 	@echo "Cleaning artifacts..."
 	find . -type d -name "__pycache__" -print -exec rm -rf {} + || true
-	rm -rf logs/* models/* /output/* || true
+	rm -rf logs/* models/* output || true
 .PHONY: show-best
 show-best:
 	@echo "Evaluating best MineEvacEnv PPO model (best_model.zip) and generating visuals"
