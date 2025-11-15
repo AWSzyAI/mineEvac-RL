@@ -1,7 +1,7 @@
 """Planning interface for MineEvac graph abstraction."""
 from __future__ import annotations
 
-from .config import Config
+from configs import Config
 from .greedy import SweepPlan, plan_greedy
 from .problem import EvacuationProblem
 

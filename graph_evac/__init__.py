@@ -1,11 +1,12 @@
 """Public API for the MineEvac graph abstraction."""
-from .config import Config
+from configs import Config
 from .greedy import SweepPlan
-from .io_utils import ensure_dir, save_json, save_timeline
+from .io_utils import ensure_dir, save_json, save_timeline, write_run_log
 from .layout import expand_floors, load_layout
 from .planner import plan_sweep
 from .problem import EvacuationProblem, Exit, Responder, Room
 from .simulator import TimelineEntry, simulate_sweep
+from .visuals import render_gantt_gif
 
 __all__ = [
     "Config",
@@ -22,4 +23,6 @@ __all__ = [
     "ensure_dir",
     "save_json",
     "save_timeline",
+    "write_run_log",
+    "render_gantt_gif",
 ]

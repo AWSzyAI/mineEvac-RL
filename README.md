@@ -1,30 +1,37 @@
 # MineEvac Graph Abstraction
 
-The repository now exposes a lightweight, fully modular graph-based evacuation abstraction that mirrors the reference MineEvac layouts.  The implementation lives under the ``graph_evac`` package and is intentionally structured so that algorithms, layout parsing, simulation, and IO are completely decoupled.
+The repository now exposes a lightweight, fully modular graph-based evacuation abstraction that mirrors the reference MineEvac layouts.  The implementation lives under the ``graph_evac`` package and is intentionally structured so that algorithms, layout parsing, simulation, IO, and visualisation are completely decoupled.
+
+## Quick start
+
+```bash
+make install   # install python deps
+make run       # simulate once (plan.json, timeline.csv/json, log, GIF)
+make batch     # sweep the parameter grid defined in configs.py
+make clean     # remove artifacts (artifacts/, batch_runs/, logs/)
+```
+
+``make run`` triggers ``src/main.py`` which in turn stitches together the graph pipeline, emits ``plan.json`` plus the CSV/JSON timeline, writes a textual ``run.log`` and renders a lightweight Gantt GIF under ``artifacts/``. ``make batch`` calls ``scripts/run_batch.py`` to iterate over every configuration emitted by ``configs.BatchSettings`` so that different redundancy/floor settings can be compared without editing code.
 
 ## High level pipeline
 
-1. ``graph_evac.config.Config`` collects every runtime parameter and can be overridden through environment variables (``GRAPH_EVAC_*``).
+1. ``configs.Config`` collects every runtime parameter and can be overridden through environment variables (``GRAPH_EVAC_*``).
 2. ``graph_evac.layout.load_layout`` reads any JSON file from ``layout/`` and ``graph_evac.layout.expand_floors`` replicates the footprint to multiple floors.
 3. ``graph_evac.problem.EvacuationProblem`` stores the strongly typed rooms/responders/exits that are shared by all algorithms.
 4. ``graph_evac.planner.plan_sweep`` dispatches to the requested algorithm (the greedy baseline today, ILP hooks reserved for future work).
-5. ``graph_evac.simulator.simulate_sweep`` produces responder timelines that can be exported to CSV/JSON with ``graph_evac.io_utils``.
+5. ``graph_evac.simulator.simulate_sweep`` produces responder timelines that can be exported to CSV/JSON with ``graph_evac.io_utils`` and visualised through ``graph_evac.visuals.render_gantt_gif``.
 
-The CLI at ``src/main.py`` stitches the whole flow together.  The ``if __name__ == '__main__'`` guard intentionally only keeps pseudo-code comments so that the same file can serve as the blueprint for LaTeX pseudo-code generation.  To execute the pipeline invoke ``run_from_cli`` explicitly:
-
-```bash
-python3 -c "from src.main import run_from_cli; run_from_cli()"
-```
-
-Key switches:
+The CLI at ``src/main.py`` stitches the whole flow together.  The ``if __name__ == '__main__'`` guard intentionally only keeps pseudo-code comments so that the same file can serve as the blueprint for LaTeX pseudo-code generation.  To execute the pipeline with custom switches call ``run_from_cli`` explicitly:
 
 ```bash
-python3 -c "from src.main import run_from_cli; run_from_cli(['--layout', 'layout/baseline.json', '--floors', '2', '--redundancy', 'double_check'])"
+python3 -c "from src.main import run_from_cli; run_from_cli(['--layout', 'layout/baseline.json', '--floors', '2', '--redundancy', 'double_check', '--output', 'artifacts/custom'])"
 ```
 
-This generates ``outputs/plan.json`` plus a CSV/JSON timeline.
+## Configuration
 
-The rest of the README below (original PPO training quick-reference) is preserved verbatim for backwards compatibility with the RL baseline.
+All settings now live in ``configs.py``.  ``Config`` describes a single deterministic run (output directory, filenames, redundancy mode, etc.) while ``BatchSettings`` exposes the parameter grid consumed by ``make batch``.  Override any field via environment variables prefixed with ``GRAPH_EVAC_`` (for example ``GRAPH_EVAC_FLOORS=3 make run``) without editing the source tree.
+
+The remainder of the README below (original PPO training quick-reference) is preserved verbatim for backwards compatibility with the RL baseline.
 
 pip install "stable-baselines3[extra]" gymnasium
 

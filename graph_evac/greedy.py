@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Sequence
 
-from .config import Config
+from configs import Config
 from .problem import EvacuationProblem, Room, Responder
 
 

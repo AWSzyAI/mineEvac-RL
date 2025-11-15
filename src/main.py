@@ -2,21 +2,22 @@
 from __future__ import annotations
 
 import argparse
-from typing import Iterable, List
+from typing import Iterable, List, Tuple
 
+from configs import Config
 from graph_evac import (
-    Config,
     EvacuationProblem,
     Exit,
     Responder,
     Room,
-    ensure_dir,
     expand_floors,
     load_layout,
     plan_sweep,
     save_json,
     save_timeline,
     simulate_sweep,
+    render_gantt_gif,
+    write_run_log,
 )
 
 
@@ -87,6 +88,33 @@ def _plan_to_dict(plan) -> dict:
     }
 
 
+def execute_run(config: Config) -> Tuple[object, List[dict]]:
+    """Execute the planning pipeline for a fully specified configuration."""
+
+    problem = build_problem(config)
+    plan = plan_sweep(problem, config, algorithm=config.algorithm)
+
+    out_dir = config.ensure_output_dir()
+    plan_dict = _plan_to_dict(plan)
+    save_json(plan_dict, str(out_dir / config.plan_filename))
+
+    timeline_rows: List[dict] = []
+    if config.simulate:
+        timeline_entries = simulate_sweep(problem, plan, config)
+        timeline_rows = [entry.__dict__ for entry in timeline_entries]
+        save_timeline(timeline_rows, str(out_dir / config.timeline_csv_filename))
+        save_json(timeline_rows, str(out_dir / config.timeline_json_filename))
+        render_gantt_gif(timeline_rows, str(out_dir / config.gif_filename))
+
+    write_run_log(
+        str(out_dir / config.log_filename),
+        config_dict=config.as_dict(),
+        plan_summary=plan_dict,
+    )
+
+    return plan, timeline_rows
+
+
 def run_from_cli(argv: List[str] | None = None):
     parser = argparse.ArgumentParser(description="MineEvac greedy abstraction")
     parser.add_argument("--layout", default="layout/baseline.json", help="Layout JSON path")
@@ -109,20 +137,7 @@ def run_from_cli(argv: List[str] | None = None):
     )
     config.update_from_env()
 
-    problem = build_problem(config)
-    plan = plan_sweep(problem, config, algorithm=config.algorithm)
-
-    out_dir = ensure_dir(config.output_dir)
-    save_json(_plan_to_dict(plan), str(out_dir / "plan.json"))
-
-    if config.simulate:
-        timeline = simulate_sweep(problem, plan, config)
-        timeline_rows = [entry.__dict__ for entry in timeline]
-        save_timeline(timeline_rows, str(out_dir / "timeline.csv"))
-        save_json(timeline_rows, str(out_dir / "timeline.json"))
-        return plan, timeline
-
-    return plan, []
+    return execute_run(config)
 
 
 if __name__ == "__main__":

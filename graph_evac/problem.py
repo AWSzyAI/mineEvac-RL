@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Mapping, Sequence, Tuple
 
-from .config import Config
+from configs import Config
 
 Coord = Tuple[float, float, float]
 

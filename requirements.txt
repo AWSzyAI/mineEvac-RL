@@ -3,4 +3,5 @@ gymnasium[classic-control]
 numpy
 matplotlib
 stable-baselines3[extra]
+pillow
 

@@ -1,4 +1,9 @@
 */__pycache__
 models/*
 output
+artifacts
+batch_runs
+logs
+outputs
+graph_outputs
 *folder-alias.json
