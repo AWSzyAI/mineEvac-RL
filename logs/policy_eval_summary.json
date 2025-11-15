@@ -1,9 +1,0 @@
-{
-  "time": 500,
-  "all_evacuated": false,
-  "evacuated": 0,
-  "room_order": [],
-  "layout": "baseline.json",
-  "policy": "n_r_1.zip",
-  "cumulative_reward": -298.08000000000084
-}

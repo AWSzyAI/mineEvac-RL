@@ -1,8 +1,0 @@
-{
-  "time": 500,
-  "all_evacuated": false,
-  "evacuated": 0,
-  "layout": "baseline.json",
-  "policy": "n_r_2.zip",
-  "cumulative_reward": -330.000000000001
-}
