@@ -1,3 +1,31 @@
+# MineEvac Graph Abstraction
+
+The repository now exposes a lightweight, fully modular graph-based evacuation abstraction that mirrors the reference MineEvac layouts.  The implementation lives under the ``graph_evac`` package and is intentionally structured so that algorithms, layout parsing, simulation, and IO are completely decoupled.
+
+## High level pipeline
+
+1. ``graph_evac.config.Config`` collects every runtime parameter and can be overridden through environment variables (``GRAPH_EVAC_*``).
+2. ``graph_evac.layout.load_layout`` reads any JSON file from ``layout/`` and ``graph_evac.layout.expand_floors`` replicates the footprint to multiple floors.
+3. ``graph_evac.problem.EvacuationProblem`` stores the strongly typed rooms/responders/exits that are shared by all algorithms.
+4. ``graph_evac.planner.plan_sweep`` dispatches to the requested algorithm (the greedy baseline today, ILP hooks reserved for future work).
+5. ``graph_evac.simulator.simulate_sweep`` produces responder timelines that can be exported to CSV/JSON with ``graph_evac.io_utils``.
+
+The CLI at ``src/main.py`` stitches the whole flow together.  The ``if __name__ == '__main__'`` guard intentionally only keeps pseudo-code comments so that the same file can serve as the blueprint for LaTeX pseudo-code generation.  To execute the pipeline invoke ``run_from_cli`` explicitly:
+
+```bash
+python3 -c "from src.main import run_from_cli; run_from_cli()"
+```
+
+Key switches:
+
+```bash
+python3 -c "from src.main import run_from_cli; run_from_cli(['--layout', 'layout/baseline.json', '--floors', '2', '--redundancy', 'double_check'])"
+```
+
+This generates ``outputs/plan.json`` plus a CSV/JSON timeline.
+
+The rest of the README below (original PPO training quick-reference) is preserved verbatim for backwards compatibility with the RL baseline.
+
 pip install "stable-baselines3[extra]" gymnasium
 
 **训练日志字段说明（一次 log 的含义）**
