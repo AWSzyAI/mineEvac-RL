@@ -41,12 +41,12 @@ class Config:
     algorithm: str = "greedy"
     layout_path: str = "layout/baseline.json"
     simulate: bool = True
-    output_dir: str = "artifacts"
+    output_dir: str = "outputs"
     plan_filename: str = "plan.json"
     timeline_json_filename: str = "timeline.json"
     timeline_csv_filename: str = "timeline.csv"
     log_filename: str = "run.log"
-    gif_filename: str = "timeline.gif"
+    gif_filename: str = "sweep.gif"
     run_name: str | None = None
 
     def ensure_output_dir(self) -> Path:
@@ -84,7 +84,7 @@ class BatchSettings:
     floors: List[int] = field(default_factory=lambda: [1, 2])
     algorithms: List[str] = field(default_factory=lambda: ["greedy"])
     floor_spacing: float = 4.0
-    output_root: str = "batch_runs"
+    output_root: str = "output/batch_runs"
 
     def iter_configs(self) -> Iterable[Config]:
         for algorithm in self.algorithms:

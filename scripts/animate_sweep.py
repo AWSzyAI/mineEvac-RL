@@ -280,7 +280,65 @@ def _draw_room_labels(ax, layout: dict):
         )
 
 
-def animate(path: str, save: str, fps: int, skip: int, trail: int, dpi: int, layout_path: Optional[str], cell_m: float, speed_solo: float, summary_path: Optional[str] = None) -> str:
+def _draw_layout_multi_floor(ax, layout: dict, floors: int) -> None:
+    """Draw one or more copies of the layout stacked along +z for multiple floors."""
+
+    if not layout or floors <= 0:
+        return
+
+    frame = layout.get("frame") or {}
+    corridor = layout.get("corridor") or {}
+    if not frame or not corridor:
+        # fall back to single-floor drawing
+        _draw_room_perimeters(ax, layout)
+        _draw_wall_rows(ax, layout)
+        _draw_room_labels(ax, layout)
+        return
+
+    base_z_min = frame.get("z1", corridor.get("z", 0))
+    base_z_max = frame.get("z2", base_z_min)
+    single_floor_h = base_z_max - base_z_min + 1
+    floor_gap = 20  # must stay in sync with sim_sweep_det default
+
+    for floor_idx in range(floors):
+        offset = floor_idx * (single_floor_h + floor_gap)
+        # shallow copy and shift z-related fields
+        shifted = json.loads(json.dumps(layout))
+        # frame
+        shifted["frame"]["z1"] = layout["frame"]["z1"] + offset
+        shifted["frame"]["z2"] = layout["frame"]["z2"] + offset
+        # corridor
+        shifted["corridor"]["z"] = layout["corridor"]["z"] + offset
+        # rooms
+        for key in ("rooms_top", "rooms_bottom"):
+            for room_orig, room_shift in zip(layout.get(key, []), shifted.get(key, [])):
+                room_shift["z"] = room_orig["z"] + offset
+        # doors
+        if "doors" in shifted:
+            doors_orig = layout["doors"]
+            doors_shift = shifted["doors"]
+            for k in ("topZ", "bottomZ"):
+                if k in doors_orig:
+                    doors_shift[k] = doors_orig[k] + offset
+
+        _draw_room_perimeters(ax, shifted)
+        _draw_wall_rows(ax, shifted)
+        _draw_room_labels(ax, shifted)
+
+
+def animate(
+    path: str,
+    save: str,
+    fps: int,
+    skip: int,
+    trail: int,
+    dpi: int,
+    layout_path: Optional[str],
+    cell_m: float,
+    speed_solo: float,
+    summary_path: Optional[str] = None,
+    floors: int = 1,
+) -> str:
     frames = load_frames(path)
     if not frames:
         raise RuntimeError(f"No frames loaded from {path}")
@@ -317,18 +375,16 @@ def animate(path: str, save: str, fps: int, skip: int, trail: int, dpi: int, lay
 
     # ---- layout overlay ----
     if layout_json:
-        # walls and labels
-        _draw_room_perimeters(ax, layout_json)
-        _draw_wall_rows(ax, layout_json)
-        _draw_room_labels(ax, layout_json)
-        # small exit labels
+        # walls and labels (single or multi-floor)
+        _draw_layout_multi_floor(ax, layout_json, max(1, floors))
+        # small exit labels for the first floor only (to avoid clutter)
         frame = layout_json.get('frame')
         corridor = layout_json.get('corridor')
         if frame and corridor:
             mid_z = corridor['z'] + corridor['h']//2
-            ax.text(frame['x1']+0.3, mid_z+0.3, 'ExitL', fontsize=6, color='green', ha='left', va='bottom',
+            ax.text(frame['x1']+0.3, mid_z+0.3, 'ExitL_F1', fontsize=6, color='green', ha='left', va='bottom',
                     bbox=dict(boxstyle='round,pad=0.08', facecolor='white', edgecolor='none', alpha=0.7), zorder=6)
-            ax.text(frame['x2']-0.3, mid_z+0.3, 'ExitR', fontsize=6, color='green', ha='right', va='bottom',
+            ax.text(frame['x2']-0.3, mid_z+0.3, 'ExitR_F1', fontsize=6, color='green', ha='right', va='bottom',
                     bbox=dict(boxstyle='round,pad=0.08', facecolor='white', edgecolor='none', alpha=0.7), zorder=6)
 
     # live heatmaps (occupants: Reds, responders: Blues) accumulating visits per cell
@@ -618,6 +674,7 @@ def main():
     parser.add_argument('--summary', default=None, help='Optional summary JSON (det) to read room_order for footer')
     parser.add_argument('--cell-m', type=float, default=0.5, help='Grid cell size in meters for ETA mapping (default: 0.5)')
     parser.add_argument('--speed-solo', type=float, default=0.8, help='Solo speed (m/s) for ETA mapping (default: 0.8)')
+    parser.add_argument('--floors', type=int, default=1, help='Number of floors to draw (for multi-floor sims)')
     args = parser.parse_args()
 
     animate(
@@ -631,6 +688,7 @@ def main():
         cell_m=args.cell_m,
         speed_solo=args.speed_solo,
         summary_path=args.summary,
+        floors=args.floors,
     )
 
 

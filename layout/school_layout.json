@@ -1,0 +1,107 @@
+{
+  "name": "school_layout",
+  "frame": {
+    "x1": 0,
+    "z1": 0,
+    "x2": 100,
+    "z2": 40
+  },
+  "corridor": {
+    "x": 10,
+    "z": 18,
+    "w": 80,
+    "h": 4
+  },
+  "rooms_top": [
+    {
+      "x": 10,
+      "z": 24,
+      "w": 20,
+      "h": 8,
+      "block": "orange_wool"
+    },
+    {
+      "x": 30,
+      "z": 24,
+      "w": 20,
+      "h": 8,
+      "block": "green_wool"
+    },
+    {
+      "x": 50,
+      "z": 24,
+      "w": 20,
+      "h": 8,
+      "block": "pink_wool"
+    },
+    {
+      "x": 70,
+      "z": 24,
+      "w": 20,
+      "h": 8,
+      "block": "yellow_wool"
+    }
+  ],
+  "rooms_bottom": [
+    {
+      "x": 10,
+      "z": 4,
+      "w": 20,
+      "h": 8,
+      "block": "cyan_wool"
+    },
+    {
+      "x": 30,
+      "z": 4,
+      "w": 20,
+      "h": 8,
+      "block": "purple_wool"
+    },
+    {
+      "x": 50,
+      "z": 4,
+      "w": 20,
+      "h": 8,
+      "block": "blue_wool"
+    },
+    {
+      "x": 70,
+      "z": 4,
+      "w": 20,
+      "h": 8,
+      "block": "red_wool"
+    }
+  ],
+  "exits": [
+    {
+      "id": "E1",
+      "position": [
+        0,
+        18
+      ]
+    },
+    {
+      "id": "E2",
+      "position": [
+        100,
+        18
+      ]
+    }
+  ],
+  "wall": {
+    "material": "white_concrete",
+    "height": 3
+  },
+  "corridor_floor": "white_concrete",
+  "exit_marker": "green_wool",
+  "occupants": {
+    "per_room": 10
+  },
+  "_notes": {
+    "layout_y": "所有地面（走廊与房间地板）铺在 LAYOUT_Y；墙从 LAYOUT_Y+1 到 LAYOUT_Y+wall.height。",
+    "alignment": "走廊 z=18..21；上排房间 z=24..31；下排房间 z=4..11。",
+    "x_range": "四间房横向区间分别是 [10..29], [30..49], [50..69], [70..89]，走廊 x=10..90，与两端出口齐平。",
+    "exits": "出口位于 (0, 中线) 与 (100, 中线)；代码会在出口外侧沿 X 方向挖空形成坠落带，保证“出门即坠落”。",
+    "frame": "frame 正好包裹建筑本体，不留多余边缘；clean 只会把 frame 内地表恢复。"
+  }
+}

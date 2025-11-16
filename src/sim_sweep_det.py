@@ -53,6 +53,8 @@ class Room:
     z1: int
     x2: int
     z2: int
+    floor: int = 1
+    is_top: bool = True
 
     def contains(self, p: Coord) -> bool:
         x, z = p
@@ -83,7 +85,15 @@ class Occupant:
 
 
 class SweepSim:
-    def __init__(self, layout: dict, responders_init: List[Coord], per_room: int = 5, seed: int = 0):
+    def __init__(
+        self,
+        layout: dict,
+        responders_init: List[Coord],
+        per_room: int = 5,
+        seed: int = 0,
+        floors: int = 1,
+        floor_gap: float = 20.0,
+    ):
         self.layout = layout
         self.rng = np.random.default_rng(seed)
         # corridor
@@ -92,6 +102,24 @@ class SweepSim:
         self.corr_x_max = corr["x"] + corr["w"] - 1
         self.corr_z_min = corr["z"]
         self.corr_z_max = corr["z"] + corr["h"] - 1
+        # floors / offsets
+        self.floors = max(1, floors)
+        self.floor_gap = max(4, int(round(floor_gap)))
+        frame = layout["frame"]
+        base_z_min = frame["z1"]
+        base_z_max = frame["z2"]
+        self.base_z_min = base_z_min
+        self.base_z_max = base_z_max
+        self.single_floor_height = base_z_max - base_z_min + 1
+        self.floor_offsets = [
+            i * (self.single_floor_height + self.floor_gap) for i in range(self.floors)
+        ]
+        self.base_mid_z = corr["z"] + corr["h"] // 2
+        self.first_floor_exit_cells = {
+            (frame["x1"], self.base_mid_z),
+            (frame["x2"], self.base_mid_z),
+        }
+
         # doors
         doors = layout.get("doors", {})
         self.door_xs: Set[int] = set(doors.get("xs", []))
@@ -99,24 +127,50 @@ class SweepSim:
         self.bot_z = int(doors.get("bottomZ", self.corr_z_min - 1))
         # rooms
         self.rooms: List[Room] = []
-        idx = 0
+        base_rooms: List[Tuple[int, int, int, int, bool]] = []
         for key in ("rooms_top", "rooms_bottom"):
+            is_top = key == "rooms_top"
             for r in layout.get(key, []):
-                x1 = r["x"]; z1 = r["z"]; x2 = x1 + r["w"] - 1; z2 = z1 + r["h"] - 1
-                self.rooms.append(Room(id=f"R{idx}", x1=x1, z1=z1, x2=x2, z2=z2))
+                x1 = r["x"]
+                z1 = r["z"]
+                x2 = x1 + r["w"] - 1
+                z2 = z1 + r["h"] - 1
+                base_rooms.append((x1, z1, x2, z2, is_top))
+        idx = 0
+        for floor_idx, offset in enumerate(self.floor_offsets):
+            for (x1, z1, x2, z2, is_top) in base_rooms:
+                self.rooms.append(
+                    Room(
+                        id=f"R{idx}_F{floor_idx + 1}",
+                        x1=x1,
+                        z1=z1 + offset,
+                        x2=x2,
+                        z2=z2 + offset,
+                        floor=floor_idx + 1,
+                        is_top=is_top,
+                    )
+                )
                 idx += 1
         # exits (corridor midline at frame ends)
-        frame = layout["frame"]
-        mid_z = self.corr_z_min + (self.corr_z_max - self.corr_z_min) // 2
-        self.exits = [(frame["x1"], mid_z), (frame["x2"], mid_z)]
+        self.exits = []
+        for offset in self.floor_offsets:
+            mid_z = self.base_mid_z + offset
+            self.exits.append((frame["x1"], mid_z))
+            self.exits.append((frame["x2"], mid_z))
+
+        # stair/connective cells between floors
+        self.stair_cells = self._build_stair_cells(frame)
 
         # precompute wall cells (room perimeters), leaving door openings on corridor-facing walls
         self.wall_cells: Set[Coord] = self._build_wall_cells()
+        self.wall_cells -= self.stair_cells
 
         # frame bounds (inclusive indices)
         frame = layout["frame"]
-        self.x_min = int(frame["x1"]) ; self.x_max = int(frame["x2"])  # inclusive
-        self.z_min = int(frame["z1"]) ; self.z_max = int(frame["z2"])  # inclusive
+        self.x_min = int(frame["x1"])
+        self.x_max = int(frame["x2"])  # inclusive
+        self.z_min = int(frame["z1"])
+        self.z_max = int(frame["z2"]) + self.floor_offsets[-1]  # inclusive
 
         # responders
         self.responders: List[Responder] = [Responder(i, (float(p[0]), float(p[1]))) for i, p in enumerate(responders_init)]
@@ -153,6 +207,25 @@ class SweepSim:
         # escort flag for timing mapping (set each step)
         self._escort_active: bool = False
 
+    def floor_of_z(self, z: int) -> int:
+        """Infer logical floor index (1-based) from a global z coordinate."""
+
+        # Try to find an exact band first (frame bounds per floor).
+        for idx, offset in enumerate(self.floor_offsets):
+            z_min = self.base_z_min + offset
+            z_max = self.base_z_max + offset
+            if z_min <= z <= z_max:
+                return idx + 1
+        # Fallback (e.g. on stairs between floors): choose nearest corridor midline.
+        best_idx = 0
+        best_delta = None
+        for idx, offset in enumerate(self.floor_offsets):
+            mid = self.base_mid_z + offset
+            delta = abs(z - mid)
+            if best_delta is None or delta < best_delta:
+                best_delta = delta
+                best_idx = idx
+        return best_idx + 1
     # ---- scheduling helpers ----
     def _candidate_entries_for(self, rid: int, pos_cell: Coord) -> List[Tuple[Coord, float, Room]]:
         """Return list of (entry_cell, cost, room) for rooms not self-cleared by this responder, sorted by cost."""
@@ -178,7 +251,12 @@ class SweepSim:
     # -------- geometry helpers --------
     def in_corridor(self, p: Coord) -> bool:
         x, z = p
-        return self.corr_x_min <= x <= self.corr_x_max and self.corr_z_min <= z <= self.corr_z_max
+        if not (self.corr_x_min <= x <= self.corr_x_max):
+            return False
+        for offset in self.floor_offsets:
+            if self.corr_z_min + offset <= z <= self.corr_z_max + offset:
+                return True
+        return False
 
     def room_at(self, p: Coord) -> Optional[Room]:
         for r in self.rooms:
@@ -187,19 +265,28 @@ class SweepSim:
         return None
 
     def is_door_crossing(self, a: Coord, b: Coord) -> bool:
-        ax, az = a; bx, bz = b
-        # top wall interface: corridor z=topZ-1 <-> room z=topZ
-        if {az, bz} == {self.top_z - 1, self.top_z} and ax == bx and ax in self.door_xs:
-            return True
-        # bottom wall interface: corridor z=bottomZ+1 <-> room z=bottomZ
-        if {az, bz} == {self.bot_z + 1, self.bot_z} and ax == bx and ax in self.door_xs:
-            return True
+        ax, az = a
+        bx, bz = b
+        if ax != bx or ax not in self.door_xs:
+            return False
+        for offset in self.floor_offsets:
+            top_f = self.top_z + offset
+            bot_f = self.bot_z + offset
+            # top wall interface: corridor z=top_f-1 <-> room z=top_f
+            if {az, bz} == {top_f - 1, top_f}:
+                return True
+            # bottom wall interface: corridor z=bot_f+1 <-> room z=bot_f
+            if {az, bz} == {bot_f + 1, bot_f}:
+                return True
         return False
 
     def valid_step(self, a: Coord, b: Coord) -> bool:
         ax, az = a; bx, bz = b
         if abs(ax - bx) + abs(az - bz) != 1:
             return False
+        # allow moving along stair shaft explicitly
+        if a in self.stair_cells and b in self.stair_cells:
+            return True
         # wall collision
         if a in self.wall_cells or b in self.wall_cells:
             return False
@@ -370,12 +457,13 @@ class SweepSim:
             # horizontal edges
             for x in range(room.x1, room.x2 + 1):
                 # top wall: only leave door openings on corridor-facing wall
-                if room.z1 == self.top_z and x in self.door_xs:
+                if room.is_top and x in self.door_xs:
+                    # doorway opening on corridor-facing wall of top rooms
                     pass
                 else:
                     walls.add((x, room.z1))
-                # bottom wall
-                if room.z2 == self.bot_z and x in self.door_xs:
+                # bottom wall: doorway openings for bottom rooms
+                if (not room.is_top) and x in self.door_xs:
                     pass
                 else:
                     walls.add((x, room.z2))
@@ -385,17 +473,33 @@ class SweepSim:
                 walls.add((room.x2, z))
         return walls
 
+    def _build_stair_cells(self, frame: dict) -> Set[Coord]:
+        """Build vertical corridor cells at exits connecting floors."""
+
+        stairs: Set[Coord] = set()
+        exit_xs = (frame["x1"], frame["x2"])
+        for exit_x in exit_xs:
+            for floor_idx in range(len(self.floor_offsets) - 1):
+                z_start = self.base_mid_z + self.floor_offsets[floor_idx]
+                z_end = self.base_mid_z + self.floor_offsets[floor_idx + 1]
+                step = 1 if z_end >= z_start else -1
+                for z in range(z_start, z_end + step, step):
+                    stairs.add((exit_x, z))
+        return stairs
+
     # -------- policy helpers --------
     def room_door_corridor_cell(self, room: Room) -> Coord:
-        # choose the doorway x nearest to room center
-        cx, cz = room.center
-        if cz >= self.corr_z_max + 1:
-            # top rooms open at z=top_z between (x in door_xs)
-            x = min(self.door_xs, key=lambda dx: abs(dx - cx))
-            return (x, self.top_z - 1)
+        """Return corridor-side doorway cell for a given room on its floor."""
+
+        cx, _ = room.center
+        x = min(self.door_xs, key=lambda dx: abs(dx - cx))
+        offset = self.floor_offsets[room.floor - 1]
+        if room.is_top:
+            # corridor cell just below the top wall on this floor
+            return (x, (self.top_z - 1) + offset)
         else:
-            x = min(self.door_xs, key=lambda dx: abs(dx - cx))
-            return (x, self.bot_z + 1)
+            # corridor cell just above the bottom wall on this floor
+            return (x, (self.bot_z + 1) + offset)
 
     def attached_occupants(self, resp_id: int) -> List[Occupant]:
         return [o for o in self.occupants if (not o.evacuated) and o.attached_to == resp_id]
@@ -427,10 +531,16 @@ class SweepSim:
                     # room-side entry inside the room
                     entry = self.room_door_corridor_cell(room)
                     ex, ez = entry
-                    if ez == self.top_z - 1:
-                        entry = (ex, self.top_z)
-                    elif ez == self.bot_z + 1:
-                        entry = (ex, self.bot_z)
+                    # if we are on the corridor side of a doorway, retarget to room-side interior cell
+                    for offset in self.floor_offsets:
+                        top_f = self.top_z + offset
+                        bot_f = self.bot_z + offset
+                        if ez == top_f - 1:
+                            entry = (ex, top_f)
+                            break
+                        if ez == bot_f + 1:
+                            entry = (ex, bot_f)
+                            break
                     D = self.distance_field([entry])
                     if not self.cell_in_bounds(pos_cell):
                         continue
@@ -576,19 +686,34 @@ class SweepSim:
 
     def snapshot(self) -> dict:
         """Legacy-style frame compatible with animate_sweep/visualize_heatmap.
-        Uses 'responders' and 'occupants' arrays with x,y coordinates (y=z).
+        Uses 'responders' and 'occupants' arrays with x,y coordinates (y=z),
+        and annotates a derived 'floor' field for multi-floor visualisation.
         """
         unswept = sum(1 for r in self.rooms if not self.room_swept[r.id])
+        resp_entries = []
+        for r in self.responders:
+            cell = self.cell_of(r.pos)
+            floor = self.floor_of_z(cell[1])
+            resp_entries.append(
+                {"id": r.id, "x": r.pos[0], "y": r.pos[1], "floor": floor}
+            )
+        occ_entries = []
+        for o in self.occupants:
+            cell = self.cell_of(o.pos)
+            floor = self.floor_of_z(cell[1])
+            occ_entries.append(
+                {
+                    "id": o.id,
+                    "x": o.pos[0],
+                    "y": o.pos[1],
+                    "floor": floor,
+                    "evacuated": o.evacuated,
+                }
+            )
         return {
             "time": self.t,
-            "responders": [
-                {"id": r.id, "x": r.pos[0], "y": r.pos[1]}
-                for r in self.responders
-            ],
-            "occupants": [
-                {"id": o.id, "x": o.pos[0], "y": o.pos[1], "evacuated": o.evacuated}
-                for o in self.occupants
-            ],
+            "responders": resp_entries,
+            "occupants": occ_entries,
             "unswept": unswept,
         }
 
@@ -615,9 +740,10 @@ class SweepSim:
         best = None
         bestd = None
         for e in self.exits:
-            d = np.hypot(e[0]-pos[0], e[1]-pos[1])
+            d = np.hypot(e[0] - pos[0], e[1] - pos[1])
             if best is None or d < bestd:
-                best = e; bestd = d
+                best = e
+                bestd = d
         return best
 
     def all_evacuated(self) -> bool:
@@ -625,7 +751,7 @@ class SweepSim:
         # each responder has self-cleared all rooms AND both are at exits
         everyone_out = all(o.evacuated for o in self.occupants)
         both_cleared = all(all(self.cleared_by[r.id].values()) for r in self.responders)
-        at_exits = all(self.cell_of(r.pos) in self.exits for r in self.responders)
+        at_exits = all(self.cell_of(r.pos) in self.first_floor_exit_cells for r in self.responders)
         return bool(everyone_out and both_cleared and at_exits)
 
     def room_order(self) -> List[str]:
@@ -663,6 +789,7 @@ def run_once(layout_path: str,
              num_responders: int = 2,
              per_room: int = 5,
              max_steps: int = 3000,
+             floors: int = 1,
              seed: int = 0,
              init_positions: Optional[List[Coord]] = None,
              frames_path: Optional[str] = None,
@@ -670,10 +797,11 @@ def run_once(layout_path: str,
              log_every: int = 50,
              cell_m: float = 0.5,
              speed_solo: float = 0.8,
-             speed_escort: float = 0.6):
+             speed_escort: float = 0.6,
+             logger: Optional[object] = None):
     layout = load_layout(layout_path)
     resp_init = init_positions if init_positions is not None else default_init_positions(layout, num_responders)
-    sim = SweepSim(layout, resp_init, per_room=per_room, seed=seed)
+    sim = SweepSim(layout, resp_init, per_room=per_room, seed=seed, floors=floors)
     f = None
     try:
         if frames_path:
@@ -687,10 +815,27 @@ def run_once(layout_path: str,
             snap0["eta_hms"] = _sec_to_hms(0.0)
             f.write(json.dumps(snap0, ensure_ascii=False) + "\n")
         print(f"[det] Simulation start: responders={num_responders}, per_room={per_room}, max_steps={max_steps}, seed={seed}", flush=True)
+        if logger is not None:
+            logger.write("=== Deterministic greedy sweep start ===\n")
+            logger.write(f"layout={layout_path}\n")
+            logger.write(f"responders={num_responders}\n")
+            logger.write(f"per_room={per_room}\n")
+            logger.write(f"max_steps={max_steps}\n")
+            logger.write(f"seed={seed}\n")
+            logger.write(f"cell_m={cell_m}\n")
+            logger.write(f"speed_solo_mps={speed_solo}\n")
+            logger.write(f"speed_escort_mps={speed_escort}\n")
+            logger.write(f"init_positions={resp_init}\n\n")
         # real-time accumulator (seconds)
         real_seconds = 0.0
         while sim.t < max_steps and not sim.all_evacuated():
+            prev_resp = [tuple(r.pos) for r in sim.responders]
+            prev_cells = [sim.cell_of(r.pos) for r in sim.responders]
+            prev_cleared = sim.room_swept.copy()
+            prev_evac = sum(1 for o in sim.occupants if o.evacuated)
+
             sim.step()
+
             if f:
                 snap = sim.snapshot()
                 snap["eta_seconds"] = real_seconds
@@ -704,6 +849,32 @@ def run_once(layout_path: str,
                 unswept = sum(1 for r in sim.rooms if not sim.room_swept[r.id])
                 rpos = ", ".join([f"({r.pos[0]:.2f},{r.pos[1]:.2f})" for r in sim.responders])
                 print(f"[det] t={sim.t:4d} | evac={evac}/{len(sim.occupants)} | unswept_rooms={unswept} | responders={rpos}", flush=True)
+            if logger is not None:
+                logger.write(f"[t={sim.t}] step\n")
+                cur_resp = [tuple(r.pos) for r in sim.responders]
+                cur_cells = [sim.cell_of(r.pos) for r in sim.responders]
+                for rid, (before, after, before_cell, after_cell) in enumerate(
+                    zip(prev_resp, cur_resp, prev_cells, cur_cells)
+                ):
+                    fb = sim.floor_of_z(before_cell[1])
+                    fa = sim.floor_of_z(after_cell[1])
+                    if before != after:
+                        logger.write(
+                            f"  responder_{rid}: {before} (F{fb}) -> {after} (F{fa})\n"
+                        )
+                    else:
+                        logger.write(
+                            f"  responder_{rid}: stay at {after} (F{fa})\n"
+                        )
+                # newly cleared rooms
+                for room in sim.rooms:
+                    rid = room.id
+                    if (not prev_cleared[rid]) and sim.room_swept[rid]:
+                        logger.write(f"  room_cleared: {rid}\n")
+                evac_now = sum(1 for o in sim.occupants if o.evacuated)
+                if evac_now != prev_evac:
+                    logger.write(f"  evacuated: {prev_evac} -> {evac_now}\n")
+                logger.write("\n")
             if delay > 0:
                 time.sleep(delay)
     finally:
@@ -735,30 +906,38 @@ def main():
     ap.add_argument("--per_room", type=int, default=5)
     ap.add_argument("--max_steps", type=int, default=3000)
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--save", default="logs/det_baseline.json")
+    ap.add_argument("--save", default="logs/baseline_greedy_result.json")
     ap.add_argument("--frames", default=None, help="If set, write JSONL frames (legacy schema) for GIF/heatmap")
     ap.add_argument("--delay", type=float, default=0.0, help="Per-step delay in seconds to make logs visible (e.g., 0.01)")
     ap.add_argument("--log-every", type=int, default=50, help="Print progress every N steps")
     ap.add_argument("--cell-m", type=float, default=0.5, help="Grid cell size in meters (default 0.5m)")
     ap.add_argument("--speed-solo", type=float, default=0.8, help="Responder speed without escort (m/s)")
     ap.add_argument("--speed-escort", type=float, default=0.6, help="Responder speed when escorting (m/s)")
+    ap.add_argument("--floors", type=int, default=1, help="Number of floors to simulate (default 1)")
     args = ap.parse_args()
 
     os.makedirs(os.path.dirname(args.save), exist_ok=True)
-    result = run_once(
-        layout_path=args.layout,
-        num_responders=args.responders,
-        per_room=args.per_room,
-        max_steps=args.max_steps,
-        seed=args.seed,
-        init_positions=None,
-        frames_path=args.frames,
-        delay=args.delay,
-        log_every=args.log_every,
-        cell_m=args.cell_m,
-        speed_solo=args.speed_solo,
-        speed_escort=args.speed_escort,
-    )
+    log_path = os.path.join(os.path.dirname(args.save), "run.log")
+    with open(log_path, "w", encoding="utf-8") as log_f:
+        result = run_once(
+            layout_path=args.layout,
+            num_responders=args.responders,
+            per_room=args.per_room,
+            max_steps=args.max_steps,
+            floors=args.floors,
+            seed=args.seed,
+            init_positions=None,
+            frames_path=args.frames,
+            delay=args.delay,
+            log_every=args.log_every,
+            cell_m=args.cell_m,
+            speed_solo=args.speed_solo,
+            speed_escort=args.speed_escort,
+            logger=log_f,
+        )
+        log_f.write("=== Summary ===\n")
+        for k, v in result.items():
+            log_f.write(f"{k}: {v}\n")
     with open(args.save, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
     print("[det] Simulation completed.", flush=True)

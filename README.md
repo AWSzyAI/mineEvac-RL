@@ -1,188 +1,390 @@
-# MineEvac Graph Abstraction
+# MineEvac：矿井疏散模拟与可视化（中文说明）
 
-The repository now exposes a lightweight, fully modular graph-based evacuation abstraction that mirrors the reference MineEvac layouts.  The implementation lives under the ``graph_evac`` package and is intentionally structured so that algorithms, layout parsing, simulation, IO, and visualisation are completely decoupled.
+本仓库围绕“矿井/建筑疏散”提供了三条互相关联但彼此解耦的工作流：
 
-## Quick start
+- **图抽象 + 贪心调度**：在简化的房间–出口图上规划扫楼顺序，导出计划、时间线和 GIF。
+- **确定性网格仿真（det）**：在原始 Minecraft 风格网格上模拟多名救援者与被疏散人员，生成“带地图背景”的动画和热力图。
+- **强化学习（PPO）基线**：在网格环境中训练 / 评估 RL 策略，并生成对应的可视化。
+
+阅读完本 README，你应该能够：
+
+1. 安装依赖；
+2. 运行一次图抽象贪心仿真并查看输出；
+3. 复现原始地图风格的确定性 GIF；
+4. 训练 / 评估一个 PPO 基线；
+5. 使用批量脚本生成用于分析的结果表。
+
+---
+
+## 1. 环境准备
+
+1. 安装 Python（推荐 3.10+）。
+2. 在仓库根目录安装依赖：
+
+   ```bash
+   make install
+   # 等价于：
+   # python3 -m pip install --upgrade pip
+   # python3 -m pip install -r requirements.txt
+   ```
+
+---
+
+## 2. 图抽象 + 贪心调度：`make run`
+
+这部分是**最快上手、最轻量**的版本，不依赖强化学习，只在简化的房间–出口图上做贪心规划。
+
+### 2.1 一次运行
+
+在根目录执行：
 
 ```bash
-make install   # install python deps
-make run       # simulate once (plan.json, timeline.csv/json, log, GIF)
-make batch     # sweep the parameter grid defined in configs.py
-make clean     # remove artifacts (artifacts/, batch_runs/, logs/)
+make run
 ```
 
-``make run`` triggers ``src/main.py`` which in turn stitches together the graph pipeline, emits ``plan.json`` plus the CSV/JSON timeline, writes a textual ``run.log`` and renders a lightweight Gantt GIF under ``artifacts/``. ``make batch`` calls ``scripts/run_batch.py`` to iterate over every configuration emitted by ``configs.BatchSettings`` so that different redundancy/floor settings can be compared without editing code.
+其中：
 
-## High level pipeline
+- 默认 `ALGO=greedy`，走图抽象贪心管线（`src/main.py`）。
+- 设置 `ALGO=ppo`（且已安装 Stable-Baselines3）时，将直接调用 PPO 基线进行评估并生成 `output/heatmap.png` 与 `output/sweep_anim.gif`，效果类似 `make show-rl`。
 
-1. ``configs.Config`` collects every runtime parameter and can be overridden through environment variables (``GRAPH_EVAC_*``).
-2. ``graph_evac.layout.load_layout`` reads any JSON file from ``layout/`` and ``graph_evac.layout.expand_floors`` replicates the footprint to multiple floors.
-3. ``graph_evac.problem.EvacuationProblem`` stores the strongly typed rooms/responders/exits that are shared by all algorithms.
-4. ``graph_evac.planner.plan_sweep`` dispatches to the requested algorithm (the greedy baseline today, ILP hooks reserved for future work).
-5. ``graph_evac.simulator.simulate_sweep`` produces responder timelines that can be exported to CSV/JSON with ``graph_evac.io_utils`` and visualised through ``graph_evac.visuals.render_gantt_gif``.
+默认行为：
 
-The CLI at ``src/main.py`` stitches the whole flow together.  The ``if __name__ == '__main__'`` guard intentionally only keeps pseudo-code comments so that the same file can serve as the blueprint for LaTeX pseudo-code generation.  To execute the pipeline with custom switches call ``run_from_cli`` explicitly:
+- 布局：`layout/baseline.json`
+- 楼层数：`1`
+- 算法：`greedy`
+- 输出目录：`outputs/`
 
-```bash
-python3 -c "from src.main import run_from_cli; run_from_cli(['--layout', 'layout/baseline.json', '--floors', '2', '--redundancy', 'double_check', '--output', 'artifacts/custom'])"
+运行结束后，在 `outputs/` 中可以看到：
+
+- `plan.json`：每个救援者的房间分配、访问顺序、时间段；
+- `timeline.csv` / `timeline.json`：时间线（谁在什么时候做什么）；
+- `run.log`：**JSON 结构的运行日志**（兼容历史 `logs/det_baseline.json` 的字段含义）；
+- `timeline.gif`：简洁的 Gantt 风格时间线 GIF。
+
+`outputs/run.log` 的结构示例（数值会随布局改变）：
+
+```json
+{
+  "layout": "baseline.json",
+  "responders": 2,
+  "per_room": 5,
+  "time": 270,
+  "all_evacuated": true,
+  "room_order": ["R2","R3","R5","R0","R4","R1"],
+  "init_positions": [[9,20],[96,20]],
+  "exits": [[8,19],[97,19]],
+  "evacuated": 30,
+  "real_hms": "00:04:30",
+  "real_minutes": 4.5,
+  "cell_m": 0.5,
+  "speed_solo_mps": 0.8,
+  "speed_escort_mps": 0.6
+}
 ```
 
-## Configuration
+审稿人如果希望看到“原始 run.log JSON 结构”，可以直接使用该文件。
 
-All settings now live in ``configs.py``.  ``Config`` describes a single deterministic run (output directory, filenames, redundancy mode, etc.) while ``BatchSettings`` exposes the parameter grid consumed by ``make batch``.  Override any field via environment variables prefixed with ``GRAPH_EVAC_`` (for example ``GRAPH_EVAC_FLOORS=3 make run``) without editing the source tree.
+### 2.2 修改参数（布局 / 楼层 / 冗余模式等）
 
-The remainder of the README below (original PPO training quick-reference) is preserved verbatim for backwards compatibility with the RL baseline.
+`make run` 底层调用 `src/main.py` 的 `run_from_cli`，核心配置在 `configs.Config` 中。你可以通过 `RUN_ARGS` 或环境变量覆盖默认值。
 
-pip install "stable-baselines3[extra]" gymnasium
+使用 `RUN_ARGS` 的例子：
 
-**训练日志字段说明（一次 log 的含义）**
-
-以下是 Stable-Baselines3(PPO) 在训练时打印的一段典型日志示例，各字段含义与解读如下：
-
-示例
--------------------------------------------
-| time/                   |               |
-|    fps                  | 275           |
-|    iterations           | 107           |
-|    time_elapsed         | 397           |
-|    total_timesteps      | 109568        |
-| train/                  |               |
-|    approx_kl            | 0.00070979795 |
-|    clip_fraction        | 0             |
-|    clip_range           | 0.2           |
-|    entropy_loss         | -1.56         |
-|    explained_variance   | 0.483         |
-|    learning_rate        | 0.0003        |
-|    loss                 | 325           |
-|    n_updates            | 1060          |
-|    policy_gradient_loss | -0.000857     |
-|    value_loss           | 697           |
--------------------------------------------
-
-说明
-- time/fps: 每秒环境步数（吞吐）。数值越高训练越快。
-- time/iterations: 迭代轮数（每轮收集一批 rollout 再优化）。本项目设置下每轮大约收集 ~2048 个环境步。
-- time/time_elapsed: 自训练开始累计用时（秒）。
-- time/total_timesteps: 到目前为止与环境交互的总步数（样本量）。
-
-- train/approx_kl: 旧策略与新策略之间的近似 KL 散度。过大表示更新过猛（可减小学习率或 clip_range）；一直很小可能更新偏保守。
-- train/clip_fraction: 在 PPO 比例裁剪中被裁剪的样本占比。典型范围 ~0.1–0.3；长期为 0 可能意味着更新幅度很小或优势较弱。
-- train/clip_range: PPO 的裁剪阈值 epsilon（默认 0.2）。
-- train/entropy_loss: 策略熵的负值（越接近 0 表示越确定性；越负表示越随机）。5 动作下最大熵约 ln(5)≈1.609，因此早期常见 ≈ -1.6。
-- train/explained_variance: 价值函数对回报的判定系数 R²（越接近 1 越好；≈0 表示几乎没学到；<0 表示劣于常数预测）。
-- train/learning_rate: 当前学习率。
-- train/loss: PPO 总损失（policy_loss + vf_coef*value_loss + ent_coef*entropy_term）。受 value_loss 影响较大，数值大不一定表示坏，但趋势应稳定。
-- train/n_updates: 到目前为止执行的优化步数（梯度更新次数）。
-- train/policy_gradient_loss: 仅策略梯度项（通常为负，因目标是最大化）。
-- train/value_loss: 价值网络的 MSE（越小越好，过大说明 critic 拟合困难或噪声大）。
-
-解读建议
-- KL 与 clip_fraction 联动判断更新幅度：KL 过大或 clip_fraction 过高→更新太猛；二者长期过低→可能学得太保守或优势为零。
-- explained_variance 稳步上升是 critic 学到的信号；长期低位需检查奖励塑形或观测设计。
-- loss/value_loss 关注趋势而非绝对值；若持续爆涨/振荡，通常降低学习率、增大 batch、或调低奖励尺度。
-
-备注
-- 训练过程的逐回合回报记录在 `logs/ppo_baseline/monitor.csv`（字段 r,l,t），而上面的表格是训练中每隔若干步汇总的一次训练状态快照（打印到 STDOUT）。
-
-## 常用命令用法
-
-环境准备
 ```bash
-python3 -m pip install -r requirements.txt
+# 使用 school_layout.json，2 层楼，冗余模式 double_check，输出到 outputs/school_run
+make run RUN_ARGS="--layout layout/school_layout.json --floors 2 --redundancy double_check --output outputs/school_run"
 ```
 
-训练 PPO（含评估与自动出图）
-```bash
-python3 src/train_ppo_baseline.py
-```
-- 产物：
-  - 模型：`models/ppo_mine_evac_baseline`
-  - 评估日志：`logs/eval_episode.jsonl`
-  - 热图：`output/heatmap.png`
- - 动画 GIF：`output/sweep_anim.gif`
+`src/main.py` 支持的一些关键参数：
 
-只评估“最佳”MineEvacEnv 模型并出图（不训练）
+- `--layout`：布局 JSON 路径，默认 `layout/baseline.json`
+- `--floors`：复制楼层数，默认 `1`
+- `--floor-spacing`：楼层间距（仅影响 3D 坐标）
+- `--algorithm`：规划算法，目前支持 `greedy`
+- `--redundancy`：冗余模式，例如 `assignment` / `double_check` / `per_responder_all_rooms`
+- `--no-sim`：仅规划，不生成时间线和 GIF
+- `--output`：输出目录，默认 `outputs`
+
+你也可以通过环境变量覆盖配置，例如：
+
 ```bash
-# 使用训练阶段 EvalCallback 产出的 best_model.zip
-python3 src/train_ppo_baseline.py --eval-only
-# 或使用 Makefile 快捷方式：
-make show-best
+GRAPH_EVAC_FLOORS=3 GRAPH_EVAC_REDUNDANCY_MODE=double_check make run
 ```
 
-仅评估已有模型并出图（跳过训练）
+---
+
+## 3. 确定性网格仿真 + 地图风格 GIF：`make det` / `make det-gif`
+
+这部分复原了原始「地图背景 + 房间 / 走廊 + 移动点 + 热力图」的可视化风格，用于对照与展示。
+
+### 3.1 单次确定性仿真：`make det`
+
 ```bash
-python3 - <<'PY'
-import os
-from src.train_ppo_baseline import run_deterministic_eval, generate_visuals, _get_device
-pr=os.getcwd(); lp=os.path.join(pr,'layout','baseline.json'); mp=os.path.join(pr,'models','ppo_mine_evac_baseline')
-ev=run_deterministic_eval(mp, lp, _get_device(), pr)
-generate_visuals(ev, lp, pr)
-print('eval_log=', ev)
-PY
+make det
 ```
 
-从任意日志生成热图
-```bash
-python3 scripts/visualize_heatmap.py \
-  --path logs/eval_episode.jsonl \
-  --layout layout/baseline.json \
-  --entity both \
-  --bins 60 \
-  --save output/heatmap.png
-```
-- 参数：
-  - `--path` 日志：支持新版 `eval_episode.jsonl` 或旧版 `trajectories.jsonl`
-  - `--layout` 布局 JSON（用于墙/门/房间叠加与坐标对齐）
-  - `--entity` 绘制对象：`responder` | `occupants` | `both`
-  - `--bins` 直方图分箱数（默认 50）
-  - `--save` 输出文件路径（省略则 `plt.show()`）
+等价于调用：
 
-从任意日志生成动画 GIF/MP4
 ```bash
-python3 scripts/animate_sweep.py \
-  --path logs/eval_episode.jsonl \
-  --layout layout/baseline.json \
-  --fps 12 --skip 1 --trail 80 --dpi 150 \
-  --save output/sweep_anim.gif
-```
-- 参数：
-  - `--path` 日志路径（同上）
-  - `--layout` 布局 JSON 覆盖	s
-  - `--fps` 帧率，`--skip` 每隔 N 帧抽样，`--trail` 尾迹长度，`--dpi` 输出分辨率
-  - `--save` 输出 GIF/MP4，若省略则窗口播放
-
-确定性（非 RL）扫楼仿真 + 可视化
-```bash
-# 单次确定性仿真（可选写出帧日志以便可视化）
 python3 src/sim_sweep_det.py \
   --layout layout/baseline.json \
   --responders 2 \
   --per_room 5 \
   --max_steps 1500 \
   --frames logs/det_eval_episode.jsonl \
-  --save logs/det_baseline.json
+  --save logs/det_baseline.json \
+  --delay 0.01 \
+  --log-every 50
+```
 
-# 将帧日志可视化为动画
+产物：
+
+- `logs/det_baseline.json`：**确定性 JSON 运行日志**，字段结构与历史提交 `a0880de` 中的 `logs/det_baseline.json` 一致；
+- `logs/det_eval_episode.jsonl`：逐步帧日志，用于热力图和动画。
+
+`logs/det_baseline.json` 的典型内容：
+
+```json
+{
+  "layout": "baseline.json",
+  "responders": 2,
+  "per_room": 5,
+  "time": 1161,
+  "all_evacuated": true,
+  "room_order": ["R3","R1","R4","R6","R2","R5"],
+  "init_positions": [[9,20],[96,20]],
+  "exits": [[8,19],[97,19]],
+  "evacuated": 30,
+  "real_hms": "00:15:09",
+  "real_minutes": 15.15,
+  "cell_m": 0.5,
+  "speed_solo_mps": 0.8,
+  "speed_escort_mps": 0.6
+}
+```
+
+### 3.2 从确定性帧生成地图 GIF：`make det-gif`
+
+```bash
+make det-gif
+```
+
+等价于：
+
+```bash
+python3 scripts/visualize_heatmap.py \
+  --path logs/det_eval_episode.jsonl \
+  --layout layout/baseline.json \
+  --entity responder \
+  --bins 80 \
+  --save output/det_heatmap.png
+
 python3 scripts/animate_sweep.py \
   --path logs/det_eval_episode.jsonl \
   --layout layout/baseline.json \
-  --save output/det_sweep.gif
+  --save output/det_sweep.gif \
+  --fps 12 \
+  --skip 1 \
+  --trail 80
 ```
 
-批量确定性实验（不同布局/人数/初始点）
-```bash
-python3 scripts/run_experiments.py \
-  --layouts layout/baseline.json layout/layout_A.json layout/layout_B.json \
-  --responders 1 2 \
-  --per_room 3 5 \
-  --max_steps 3000 \
-  --out logs/det_experiments.jsonl
-```
-- 产物：`logs/det_experiments.jsonl` 与同名 `.md` 摘要。
+产物：
 
-快速检查
+- `output/det_heatmap.png`：带布局的访问热力图；
+- `output/det_sweep.gif`：地图风格的疏散动画，与 `example/det_sweep.gif` 风格相同。
+
+---
+
+## 4. 强化学习（PPO）基线：训练 / 评估 / 可视化
+
+RL 相关逻辑集中在：
+
+- 环境：`src/mine_evac_env.py`
+- 训练与评估：`src/train_ppo_baseline.py`
+
+### 4.1 仅评估已有模型并生成 GIF（推荐先用）
+
+如果已经有现成模型（`models/best_model.zip` 或 `models/ppo_mine_evac_baseline.zip`），可以直接评估：
+
 ```bash
-tail -n 5 logs/ppo_baseline/monitor.csv         # 训练每回合回报
-tail -n 5 logs/eval_episode.jsonl               # 评估逐步奖励与累计回报
-ls -la output                                   # 出图产物
+python3 src/train_ppo_baseline.py --eval-only
+```
+
+或使用 Make 封装：
+
+```bash
+make show-rl
+```
+
+完成后得到：
+
+- 评估日志：`logs/eval_episode.jsonl`
+- 热力图：`output/heatmap.png`
+- 地图 GIF：`output/sweep_anim.gif`
+
+这三者可与确定性管线的 `logs/det_eval_episode.jsonl`、`output/det_heatmap.png`、`output/det_sweep.gif` 对照分析。
+
+### 4.2 训练 PPO 模型
+
+完整训练（耗时视机器而定）：
+
+```bash
+make train
+# 或自定义步数：
+python3 src/train_ppo_baseline.py --timesteps 400000
+```
+
+训练过程：
+
+1. 创建 MineEvac 环境（图结构 + 网格动态）；
+2. 使用 Stable-Baselines3 的 `PPO` 算法训练；
+3. 周期性评估并保存 `best_model.zip`；
+4. 结束后自动进行一轮确定性评估并生成热图和 GIF。
+
+典型产物：
+
+- 模型：
+  - `models/ppo_mine_evac_baseline.zip`
+  - `models/best_model.zip`
+- 训练监控：`logs/ppo_baseline/monitor.csv`
+- 评估日志：`logs/eval_episode.jsonl`
+- 可视化：`output/heatmap.png`, `output/sweep_anim.gif`
+
+---
+
+## 5. 批量图抽象分析：`make batch`
+
+批量图抽象 sweeps 由 `scripts/run_batch.py` 驱动，配置集中在 `configs.BatchSettings`。
+
+### 5.1 默认批量运行
+
+```bash
+make batch
+```
+
+默认配置（见 `configs.py` 中的 `BatchSettings`）大致为：
+
+- 布局：`layout/baseline.json`
+- 楼层数列表：例如 `[1, 2]`
+- 冗余模式：`["assignment","double_check","per_responder_all_rooms"]`
+- 算法：`["greedy"]`
+- 输出根目录：`batch_runs/`
+
+脚本会为每个配置调用 `execute_run(config)`（与 `make run` 相同的图抽象管线），并把结果汇总为：
+
+- `batch_runs/summary.json`
+- `batch_runs/summary.csv`
+
+每一行包含 run 标签、布局路径、楼层数、冗余模式、算法、makespan 等信息，可直接导入 Excel / pandas 进行分析。
+
+### 5.2 自定义批量参数
+
+你可以直接调用脚本并传入参数：
+
+```bash
+python3 scripts/run_batch.py \
+  --layout layout/baseline.json \
+  --floors 1 2 3 \
+  --redundancy assignment double_check \
+  --algorithms greedy
+```
+
+支持的参数（见 `scripts/run_batch.py`）：
+
+- `--layout`：覆盖 `BatchSettings.layout_path`
+- `--output`：覆盖输出根目录
+- `--floors`：覆盖楼层数列表（空格分隔）
+- `--redundancy`：冗余模式列表
+- `--algorithms`：算法列表
+
+如需生成你自己的 CSV 格式（例如包含 `layout,floors,per_room_occ,responders,...` 等列），可以在 `scripts/run_batch.py` 内部根据 `config + plan + layout JSON` 自行组合并写出。
+
+---
+
+## 6. 目录结构速览
+
+- `layout/`：布局定义（`baseline.json`, `layout_A.json`, `layout_B.json`, `school_layout.json` 等）
+- `graph_evac/`：
+  - `layout.py`：从布局 JSON 抽取房间、出口、救援者；
+  - `problem.py`：图抽象问题定义；
+  - `greedy.py`：贪心扫楼算法；
+  - `simulator.py`：把计划展开为时间线；
+  - `visuals.py`：`render_gantt_gif`，生成时间线 GIF；
+  - `io_utils.py`：JSON / CSV 保存与 `run.log` JSON 生成。
+- `src/`：
+  - `main.py`：图抽象 CLI（被 `make run` 调用）；
+  - `sim_sweep_det.py`：确定性网格仿真（被 `make det` 调用）；
+  - `mine_evac_env.py`：RL 环境定义；
+  - `train_ppo_baseline.py`：PPO 训练与评估。
+- `scripts/`：
+  - `animate_sweep.py`：地图风格动画 GIF 生成；
+  - `visualize_heatmap.py`：热力图生成；
+  - `run_batch.py`：批量图抽象 sweeps；
+  - 其他 RL 扩展训练 / 评估 / 报告脚本。
+- `outputs/`：`make run` 的默认输出目录（plan/timeline/run.log/timeline.gif）。
+- `logs/`：训练与评估日志（包括确定性与 RL）。
+- `output/`：确定性与 RL 可视化产物（热力图和地图 GIF）。
+
+---
+
+## 7. 常用命令速查表
+
+安装依赖：
+
+```bash
+make install
+```
+
+图抽象贪心（单次）：
+
+```bash
+make run
+make run RUN_ARGS="--layout layout/school_layout.json --floors 2 --redundancy double_check"
+```
+
+确定性网格基线 + 地图 GIF：
+
+```bash
+make det        # 生成 logs/det_baseline.json, logs/det_eval_episode.jsonl
+make det-gif    # 生成 output/det_heatmap.png, output/det_sweep.gif
+```
+
+强化学习基线：
+
+```bash
+make train      # 训练 PPO 模型
+make show-rl    # 评估 best_model 并生成 output/heatmap.png, output/sweep_anim.gif
+# 或直接：
+python3 src/train_ppo_baseline.py --eval-only
+```
+
+批量图抽象分析：
+
+```bash
+make batch
+# 或自定义：
+python3 scripts/run_batch.py --floors 1 2 --redundancy assignment double_check
+```
+
+清理所有产物：
+
+```bash
+make clean
+```
+
+---
+
+如果你只想“跑起来看结果”，建议按以下顺序尝试：
+
+1. `make run`：看 `outputs/` 下的 `plan.json`、`run.log` 和 `timeline.gif`；
+2. `make det && make det-gif`：对比 `logs/det_baseline.json` 与 `output/det_sweep.gif`；
+3. `make show-rl`：体验 PPO 策略生成的热力图和地图 GIF。
+
+
+
+---
+
+```bash
+FLOORS=2 make run ALGO=greedy LAYOUT_FILE=layout/baseline.json RESPONDERS=2 PER_ROOM=5
+FLOORS=2 RESPONDERS=2 PER_ROOM=5 LAYOUT_FILE=layout/baseline.json make det-gif
 ```
