@@ -69,6 +69,10 @@ batch:
 	@echo "Running deterministic multi-floor batch sweeps..."
 	$(PYTHON) scripts/run_det_batch.py $(BATCH_ARGS)
 
+batchsum:
+	@echo "Regenerating summary.json/csv from det_batch.jsonl"
+	$(PYTHON) scripts/batch_summary.py
+
 # ---- Original deterministic + RL pipelines (map-based GIFs) ----
 
 det:

@@ -131,8 +131,6 @@ def main(argv: List[str] | None = None) -> None:
     out_root.mkdir(parents=True, exist_ok=True)
 
     jsonl_path = out_root / "det_batch.jsonl"
-    summary_json_path = out_root / "summary.json"
-    summary_csv_path = out_root / "summary.csv"
 
     # --- checkpoint: load existing results (if any) ---------------------------
     existing_results: List[Dict[str, Any]] = []
@@ -172,8 +170,10 @@ def main(argv: List[str] | None = None) -> None:
     new_results: List[Dict[str, Any]] = []
     if tasks:
         max_workers = min(os.cpu_count() or 1, len(tasks))
-        with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+        with open(jsonl_path, "a", encoding="utf-8") as jf, concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
             for result in executor.map(_run_single, tasks):
+                jf.write(json.dumps(result, ensure_ascii=False) + "\n")
+                jf.flush()
                 new_results.append(result)
 
     all_results = existing_results + new_results
@@ -183,57 +183,8 @@ def main(argv: List[str] | None = None) -> None:
         for res in all_results:
             jf.write(json.dumps(res, ensure_ascii=False) + "\n")
 
-    # --- build summaries ------------------------------------------------------
-    summaries: List[Dict[str, Any]] = []
-    for res in all_results:
-        layout_label = res.get("layout_label")
-        layout_path = res.get("layout") or res.get("layout_path")
-        floor = res.get("floors") or res.get("floor") or 1
-        per_room = res.get("per_room")
-        responders = res.get("responders")
-        room_order = "->".join(res.get("room_order", []))
-        summaries.append(
-            {
-                "layout": layout_label,
-                "layout_path": layout_path,
-                "floors": floor,
-                "per_room": per_room,
-                "responders": responders,
-                "max_steps": res.get("max_steps"),
-                "time_steps": res.get("time"),
-                "all_evacuated": res.get("all_evacuated"),
-                "evacuated": res.get("evacuated"),
-                "real_hms": res.get("real_hms"),
-                "real_minutes": res.get("real_minutes"),
-                "room_order": room_order,
-            }
-        )
-
-    # Write JSON summary
-    summary_json_path.write_text(json.dumps(summaries, indent=2, ensure_ascii=False), encoding="utf-8")
-
-    # Write CSV summary
-    fieldnames = [
-        "layout",
-        "layout_path",
-        "floors",
-        "per_room",
-        "responders",
-        "max_steps",
-        "time_steps",
-        "all_evacuated",
-        "evacuated",
-        "real_hms",
-        "real_minutes",
-        "room_order",
-    ]
-    with open(summary_csv_path, "w", encoding="utf-8", newline="") as cf:
-        writer = csv.DictWriter(cf, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(summaries)
-
     print(f"Deterministic batch JSONL written to {jsonl_path}")
-    print(f"Deterministic batch summary written to {summary_json_path} and {summary_csv_path}")
+    print("Run 'make batchsum' to regenerate summary.json/summary.csv from det_batch.jsonl")
 
 
 if __name__ == "__main__":
