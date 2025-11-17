@@ -1,7 +1,6 @@
 psutil
 gymnasium[classic-control]
-numpy
+numpy<2
 matplotlib
 stable-baselines3[extra]
 pillow
-

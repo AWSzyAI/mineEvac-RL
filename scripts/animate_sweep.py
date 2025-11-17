@@ -69,7 +69,11 @@ def load_frames(path: str) -> List[dict]:
             line = line.strip()
             if not line:
                 continue
-            data = json.loads(line)
+            try:
+                data = json.loads(line)
+            except Exception:
+                # Skip malformed JSON lines (robustness for mixed logs)
+                continue
             # Try new format first
             if 'responder_pos' in data:
                 # new eval format

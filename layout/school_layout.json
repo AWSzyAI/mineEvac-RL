@@ -75,19 +75,18 @@
   "exits": [
     {
       "id": "E1",
-      "position": [
-        0,
-        18
-      ]
+      "coord": [0, 18]
     },
     {
       "id": "E2",
-      "position": [
-        100,
-        18
-      ]
+      "coord": [100, 18]
     }
   ],
+  "doors": {
+    "topZ": 24,
+    "bottomZ": 11,
+    "xs": [20, 40, 60, 80]
+  },
   "wall": {
     "material": "white_concrete",
     "height": 3

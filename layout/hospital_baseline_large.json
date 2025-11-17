@@ -1,0 +1,52 @@
+{
+  "name": "hospital_baseline_large",
+  "frame": { "x1": 10, "z1": 1, "x2": 160, "z2": 70 },
+
+  "corridor": { "x": 10, "z": 30, "w": 150, "h": 10 },
+
+  "rooms_top": [
+    { "x": 10,  "z": 40, "w": 15, "h": 20, "block": "pink_wool" },
+    { "x": 25,  "z": 40, "w": 15, "h": 20, "block": "pink_wool" },
+    { "x": 40,  "z": 40, "w": 15, "h": 20, "block": "pink_wool" },
+    { "x": 55,  "z": 40, "w": 15, "h": 20, "block": "pink_wool" },
+    { "x": 70,  "z": 40, "w": 15, "h": 20, "block": "pink_wool" },
+    { "x": 85,  "z": 40, "w": 15, "h": 20, "block": "pink_wool" },
+    { "x": 100, "z": 40, "w": 15, "h": 20, "block": "pink_wool" },
+    { "x": 115, "z": 40, "w": 15, "h": 20, "block": "pink_wool" },
+    { "x": 130, "z": 40, "w": 15, "h": 20, "block": "pink_wool" },
+    { "x": 145, "z": 40, "w": 15, "h": 20, "block": "pink_wool" }
+  ],
+
+  "rooms_bottom": [
+    { "x": 10,  "z": 5, "w": 15, "h": 20, "block": "blue_wool" },
+    { "x": 25,  "z": 5, "w": 15, "h": 20, "block": "blue_wool" },
+    { "x": 40,  "z": 5, "w": 15, "h": 20, "block": "blue_wool" },
+    { "x": 55,  "z": 5, "w": 15, "h": 20, "block": "blue_wool" },
+    { "x": 70,  "z": 5, "w": 15, "h": 20, "block": "blue_wool" },
+    { "x": 85,  "z": 5, "w": 15, "h": 20, "block": "blue_wool" },
+    { "x": 100, "z": 5, "w": 15, "h": 20, "block": "blue_wool" },
+    { "x": 115, "z": 5, "w": 15, "h": 20, "block": "blue_wool" },
+    { "x": 130, "z": 5, "w": 15, "h": 20, "block": "blue_wool" },
+    { "x": 145, "z": 5, "w": 15, "h": 20, "block": "blue_wool" }
+  ],
+
+  "nurse_station": { "x": 70, "z": 30, "w": 30, "h": 10, "block": "yellow_wool" },
+
+  "doors": {
+    "topZ": 40,
+    "bottomZ": 29,
+    "xs": [17, 32, 47, 62, 77, 92, 107, 122, 137, 152]
+  },
+
+  "wall": { "material": "white_concrete", "height": 3 },
+  "corridor_floor": "white_concrete",
+  "exit_marker": "green_wool",
+
+  "occupants": { "per_room": 4 },
+
+  "_notes": {
+    "alignment": "走廊 z=30..39；上排房间 z=40..59；下排房间 z=5..24。",
+    "x_range": "病房分布 [10..160]；中间护士站提升结构复杂性。",
+    "exits": "出口位于 (10,30) 与 (160,30)。"
+  }
+}

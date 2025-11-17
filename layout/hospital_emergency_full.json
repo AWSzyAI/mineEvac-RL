@@ -1,0 +1,263 @@
+{
+  "name": "hospital_inpatient_full_AAA",
+  "frame": {
+    "x1": 0,
+    "z1": 0,
+    "x2": 230,
+    "z2": 180
+  },
+
+  "rooms": [
+    {
+      "name": "EO_OBS",
+      "kind": "treatment_area",
+      "shape": { "type": "rect", "x": 10, "z": 100, "w": 80, "h": 60 },
+      "block": "light_gray_wool"
+    },
+    {
+      "name": "STORAGE",
+      "kind": "storage",
+      "shape": { "type": "rect", "x": 90, "z": 150, "w": 30, "h": 30 },
+      "block": "white_wool"
+    },
+    {
+      "name": "SOLID_UTIL_TOP",
+      "kind": "utility",
+      "shape": { "type": "rect", "x": 90, "z": 125, "w": 30, "h": 25 },
+      "block": "gray_wool"
+    },
+    {
+      "name": "PATIENT_TLT",
+      "kind": "toilet",
+      "shape": { "type": "rect", "x": 90, "z": 100, "w": 30, "h": 25 },
+      "block": "yellow_wool"
+    },
+    {
+      "name": "CRITICAL_CARE",
+      "kind": "critical_care",
+      "shape": { "type": "rect", "x": 120, "z": 110, "w": 80, "h": 70 },
+      "block": "light_blue_wool"
+    },
+    {
+      "name": "MED_STORAGE",
+      "kind": "storage",
+      "shape": {
+        "type": "poly",
+        "points": [
+          { "x": 200, "z": 110 },
+          { "x": 230, "z": 120 },
+          { "x": 230, "z": 170 },
+          { "x": 200, "z": 170 }
+        ]
+      },
+      "block": "white_wool"
+    },
+    {
+      "name": "WAITING",
+      "kind": "waiting_room",
+      "shape": { "type": "rect", "x": 10, "z": 10, "w": 120, "h": 60 },
+      "block": "orange_wool"
+    },
+    {
+      "name": "REGISTRATION",
+      "kind": "registration",
+      "shape": { "type": "rect", "x": 130, "z": 10, "w": 50, "h": 40 },
+      "block": "yellow_wool"
+    },
+    {
+      "name": "TRIAGE",
+      "kind": "triage",
+      "shape": { "type": "rect", "x": 180, "z": 10, "w": 40, "h": 50 },
+      "block": "orange_wool"
+    },
+    {
+      "name": "STAFF_TLT",
+      "kind": "toilet",
+      "shape": { "type": "rect", "x": 120, "z": 50, "w": 25, "h": 20 },
+      "block": "yellow_wool"
+    },
+    {
+      "name": "STAFF_LOUNGE",
+      "kind": "staff",
+      "shape": { "type": "rect", "x": 145, "z": 50, "w": 35, "h": 20 },
+      "block": "green_wool"
+    },
+    {
+      "name": "SOLID_UTIL_BOTTOM",
+      "kind": "utility",
+      "shape": { "type": "rect", "x": 180, "z": 50, "w": 40, "h": 20 },
+      "block": "gray_wool"
+    },
+    {
+      "name": "WARD_RIGHT",
+      "kind": "ward",
+      "shape": { "type": "rect", "x": 200, "z": 100, "w": 30, "h": 60 },
+      "block": "white_wool"
+    }
+  ],
+
+  "corridors": [
+    {
+      "name": "MAIN_CORRIDOR",
+      "shape": { "type": "rect", "x": 10, "z": 70, "w": 210, "h": 30 },
+      "block": "white_concrete"
+    }
+  ],
+
+  "beds": [
+    {
+      "name": "EO_OBS_BED_1",
+      "area": "EO_OBS",
+      "shape": { "type": "rect", "x": 15, "z": 105, "w": 20, "h": 6 },
+      "block": "brown_wool"
+    },
+    {
+      "name": "EO_OBS_BED_2",
+      "area": "EO_OBS",
+      "shape": { "type": "rect", "x": 15, "z": 113, "w": 20, "h": 6 },
+      "block": "brown_wool"
+    },
+    {
+      "name": "EO_OBS_BED_3",
+      "area": "EO_OBS",
+      "shape": { "type": "rect", "x": 15, "z": 121, "w": 20, "h": 6 },
+      "block": "brown_wool"
+    },
+    {
+      "name": "EO_OBS_BED_4",
+      "area": "EO_OBS",
+      "shape": { "type": "rect", "x": 15, "z": 129, "w": 20, "h": 6 },
+      "block": "brown_wool"
+    },
+    {
+      "name": "EO_OBS_BED_5",
+      "area": "EO_OBS",
+      "shape": { "type": "rect", "x": 15, "z": 137, "w": 20, "h": 6 },
+      "block": "brown_wool"
+    },
+    {
+      "name": "EO_OBS_BED_6",
+      "area": "EO_OBS",
+      "shape": { "type": "rect", "x": 15, "z": 145, "w": 20, "h": 6 },
+      "block": "brown_wool"
+    },
+
+    {
+      "name": "CRIT_BED_1",
+      "area": "CRITICAL_CARE",
+      "shape": { "type": "rect", "x": 130, "z": 135, "w": 15, "h": 10 },
+      "block": "blue_wool"
+    },
+    {
+      "name": "CRIT_BED_2",
+      "area": "CRITICAL_CARE",
+      "shape": { "type": "rect", "x": 150, "z": 135, "w": 15, "h": 10 },
+      "block": "blue_wool"
+    },
+    {
+      "name": "CRIT_BED_3",
+      "area": "CRITICAL_CARE",
+      "shape": { "type": "rect", "x": 170, "z": 135, "w": 15, "h": 10 },
+      "block": "blue_wool"
+    },
+
+    {
+      "name": "RED_BED_1",
+      "area": "WARD_RIGHT",
+      "shape": { "type": "rect", "x": 205, "z": 105, "w": 20, "h": 8 },
+      "block": "red_wool"
+    },
+    {
+      "name": "RED_BED_2",
+      "area": "WARD_RIGHT",
+      "shape": { "type": "rect", "x": 205, "z": 115, "w": 20, "h": 8 },
+      "block": "red_wool"
+    },
+    {
+      "name": "RED_BED_3",
+      "area": "WARD_RIGHT",
+      "shape": { "type": "rect", "x": 205, "z": 125, "w": 20, "h": 8 },
+      "block": "red_wool"
+    },
+    {
+      "name": "RED_BED_4",
+      "area": "WARD_RIGHT",
+      "shape": { "type": "rect", "x": 205, "z": 135, "w": 20, "h": 8 },
+      "block": "red_wool"
+    },
+    {
+      "name": "RED_BED_5",
+      "area": "WARD_RIGHT",
+      "shape": { "type": "rect", "x": 205, "z": 145, "w": 20, "h": 8 },
+      "block": "red_wool"
+    },
+    {
+      "name": "RED_BED_6",
+      "area": "WARD_RIGHT",
+      "shape": { "type": "rect", "x": 205, "z": 155, "w": 20, "h": 8 },
+      "block": "red_wool"
+    }
+  ],
+
+  "chairs": [
+    {
+      "name": "PATIENT_CHAIR_1",
+      "area": "PATIENT_CHAIRS",
+      "shape": { "type": "rect", "x": 135, "z": 105, "w": 6, "h": 6 },
+      "block": "white_wool"
+    },
+    {
+      "name": "PATIENT_CHAIR_2",
+      "area": "PATIENT_CHAIRS",
+      "shape": { "type": "rect", "x": 145, "z": 105, "w": 6, "h": 6 },
+      "block": "white_wool"
+    },
+    {
+      "name": "PATIENT_CHAIR_3",
+      "area": "PATIENT_CHAIRS",
+      "shape": { "type": "rect", "x": 155, "z": 105, "w": 6, "h": 6 },
+      "block": "white_wool"
+    },
+    {
+      "name": "PATIENT_CHAIR_4",
+      "area": "PATIENT_CHAIRS",
+      "shape": { "type": "rect", "x": 165, "z": 105, "w": 6, "h": 6 },
+      "block": "white_wool"
+    },
+    {
+      "name": "PATIENT_CHAIR_5",
+      "area": "PATIENT_CHAIRS",
+      "shape": { "type": "rect", "x": 175, "z": 105, "w": 6, "h": 6 },
+      "block": "white_wool"
+    },
+    {
+      "name": "PATIENT_CHAIR_6",
+      "area": "PATIENT_CHAIRS",
+      "shape": { "type": "rect", "x": 185, "z": 105, "w": 6, "h": 6 },
+      "block": "white_wool"
+    }
+  ],
+
+  "entrances": [
+    { "name": "AMB_ENTRANCE_LEFT",   "x": 60,  "z": 0, "to": "WAITING" },
+    { "name": "AMB_ENTRANCE_CENTER", "x": 140, "z": 0, "to": "REGISTRATION" },
+    { "name": "AMB_ENTRANCE_RIGHT",  "x": 200, "z": 0, "to": "TRIAGE" }
+  ],
+
+  "exits": [
+    { "name": "TO_LAB_RADIOLOGY", "x": 160, "z": 180, "from": "CRITICAL_CARE" }
+  ],
+
+  "doors": [
+    { "from": "WAITING",           "to": "MAIN_CORRIDOR", "x": 60,  "z": 70 },
+    { "from": "REGISTRATION",      "to": "MAIN_CORRIDOR", "x": 145, "z": 50 },
+    { "from": "TRIAGE",            "to": "MAIN_CORRIDOR", "x": 195, "z": 60 },
+    { "from": "STAFF_TLT",         "to": "MAIN_CORRIDOR", "x": 130, "z": 70 },
+    { "from": "STAFF_LOUNGE",      "to": "MAIN_CORRIDOR", "x": 160, "z": 70 },
+    { "from": "SOLID_UTIL_BOTTOM", "to": "MAIN_CORRIDOR", "x": 200, "z": 70 },
+    { "from": "EO_OBS",            "to": "MAIN_CORRIDOR", "x": 40,  "z": 100 },
+    { "from": "PATIENT_TLT",       "to": "MAIN_CORRIDOR", "x": 105, "z": 100 },
+    { "from": "CRITICAL_CARE",     "to": "MAIN_CORRIDOR", "x": 160, "z": 110 },
+    { "from": "MED_STORAGE",       "to": "MAIN_CORRIDOR", "x": 210, "z": 110 }
+  ]
+}

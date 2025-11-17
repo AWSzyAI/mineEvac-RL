@@ -1,0 +1,93 @@
+{
+  "name": "hospital_emergency_full",
+  "frame": { "x1": 0, "z1": 0, "x2": 180, "z2": 130 },
+
+  "rooms": [
+    { "name": "EO_Observation", "x": 5, "z": 20, "w": 40, "h": 70, "block": "light_gray_wool" },
+
+    { "name": "Storage",       "x": 50, "z": 20, "w": 20, "h": 25, "block": "white_wool" },
+    { "name": "Solid_Utility_L", "x": 50, "z": 50, "w": 20, "h": 25, "block": "gray_wool" },
+
+    { "name": "Patient_TLT",  "x": 50, "z": 80, "w": 20, "h": 20, "block": "yellow_wool" },
+
+    { "name": "Critical_Care", "x": 75, "z": 20, "w": 60, "h": 60, "block": "light_blue_wool" },
+
+    { "name": "Blue_Bed_1", "x": 80, "z": 85, "w": 15, "h": 20, "block": "blue_wool" },
+    { "name": "Blue_Bed_2", "x": 100, "z": 85, "w": 15, "h": 20, "block": "blue_wool" },
+    { "name": "Blue_Bed_3", "x": 120, "z": 85, "w": 15, "h": 20, "block": "blue_wool" },
+
+    { "name": "Patient_Chairs", "x": 90, "z": 105, "w": 40, "h": 15, "block": "white_wool" },
+
+    { "name": "MED_Storage", "x": 145, "z": 20, "w": 30, "h": 35, "block": "yellow_wool" },
+
+    { "name": "Red_Bed_1", "x": 145, "z": 60, "w": 30, "h": 10, "block": "red_wool" },
+    { "name": "Red_Bed_2", "x": 145, "z": 73, "w": 30, "h": 10, "block": "red_wool" },
+    { "name": "Red_Bed_3", "x": 145, "z": 86, "w": 30, "h": 10, "block": "red_wool" },
+    { "name": "Red_Bed_4", "x": 145, "z": 99, "w": 30, "h": 10, "block": "red_wool" },
+    { "name": "Red_Bed_5", "x": 145, "z": 112, "w": 30, "h": 10, "block": "red_wool" },
+    { "name": "Red_Bed_6", "x": 145, "z": 125, "w": 30, "h": 10, "block": "red_wool" },
+
+    { "name": "Waiting_Room",   "x": 5,  "z": 95, "w": 70, "h": 30, "block": "cyan_wool" },
+    { "name": "Registration",   "x": 5,  "z": 130, "w": 70, "h": 20, "block": "white_wool" },
+
+    { "name": "Triage",         "x": 80, "z": 130, "w": 40, "h": 25, "block": "orange_wool" },
+
+    { "name": "Staff_TLT",      "x": 25, "z": 130, "w": 20, "h": 20, "block": "yellow_wool" },
+    { "name": "Staff_Lounge",   "x": 50, "z": 130, "w": 25, "h": 20, "block": "pink_wool" }
+  ],
+
+  "corridors": [
+    { "name": "Main_Corridor", "x": 0, "z": 110, "w": 180, "h": 15, "block": "white_concrete" }
+  ],
+
+  "entrances": [
+    { "name": "Ambulatory_Entrance_1", "x": 30,  "z": 150 },
+    { "name": "Ambulatory_Entrance_2", "x": 90,  "z": 150 },
+    { "name": "Ambulatory_Entrance_3", "x": 150, "z": 150 }
+  ],
+
+  "exits": [
+    { "name": "To_Lab_Radiology", "x": 90, "z": 0 }
+  ],
+
+  "doors": [
+    { "from": "EO_Observation", "to": "Main_Corridor", "x": 45, "z": 55 },
+    { "from": "Storage", "to": "Main_Corridor", "x": 60, "z": 45 },
+    { "from": "Solid_Utility_L", "to": "Main_Corridor", "x": 60, "z": 75 },
+    { "from": "Patient_TLT", "to": "Main_Corridor", "x": 60, "z": 95 },
+
+    { "from": "Critical_Care", "to": "Main_Corridor", "x": 100, "z": 80 },
+
+    { "from": "Blue_Bed_1", "to": "Main_Corridor", "x": 87, "z": 105 },
+    { "from": "Blue_Bed_2", "to": "Main_Corridor", "x": 107, "z": 105 },
+    { "from": "Blue_Bed_3", "to": "Main_Corridor", "x": 127, "z": 105 },
+
+    { "from": "Patient_Chairs", "to": "Main_Corridor", "x": 110, "z": 110 },
+
+    { "from": "MED_Storage", "to": "Main_Corridor", "x": 160, "z": 55 },
+
+    { "from": "Red_Bed_1", "to": "Main_Corridor", "x": 160, "z": 65 },
+    { "from": "Red_Bed_2", "to": "Main_Corridor", "x": 160, "z": 78 },
+    { "from": "Red_Bed_3", "to": "Main_Corridor", "x": 160, "z": 91 },
+    { "from": "Red_Bed_4", "to": "Main_Corridor", "x": 160, "z": 104 },
+    { "from": "Red_Bed_5", "to": "Main_Corridor", "x": 160, "z": 117 },
+    { "from": "Red_Bed_6", "to": "Main_Corridor", "x": 160, "z": 130 },
+
+    { "from": "Waiting_Room", "to": "Main_Corridor", "x": 40, "z": 110 },
+    { "from": "Registration", "to": "Main_Corridor", "x": 40, "z": 125 },
+
+    { "from": "Triage", "to": "Main_Corridor", "x": 100, "z": 125 },
+
+    { "from": "Staff_TLT", "to": "Main_Corridor", "x": 35, "z": 125 },
+    { "from": "Staff_Lounge", "to": "Main_Corridor", "x": 60, "z": 125 }
+  ],
+
+  "occupants": {
+    "EO_Observation": 6,
+    "Critical_Care": 4,
+    "Blue_Beds": 3,
+    "Red_Beds": 6,
+    "Waiting_Room": 10,
+    "Triage": 2
+  }
+}

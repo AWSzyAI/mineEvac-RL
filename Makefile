@@ -4,7 +4,11 @@ RUN_ARGS ?=
 BATCH_ARGS ?=
 ALGO ?= greedy
 FLOORS ?= 1
-LAYOUT_FILE ?= layout/baseline.json
+# LAYOUT_FILE ?= layout/baseline.json
+# LAYOUT_FILE ?= layout/school_baseline_large.json
+# LAYOUT_FILE ?= layout/hospital_inpatient.json
+LAYOUT_FILE ?= layout/layout_2.json
+
 RESPONDERS ?= 2
 PER_ROOM ?= 5
 
@@ -13,12 +17,14 @@ RUN_LABEL := $(ALGO)_$(LAYOUT_NAME)_res$(RESPONDERS)_per$(PER_ROOM)_floors$(FLOO
 RUN_DIR := output/$(RUN_LABEL)
 LOG_DIR := $(RUN_DIR)/logs
 VIS_DIR := $(RUN_DIR)/visuals
+MAP_DIR := output/layout_maps
+MAP_FILE := $(MAP_DIR)/$(LAYOUT_NAME)_map.png
 
 .ONESHELL:
 
 .PHONY: help install run run_greedy run_ppo batch clean \
 	det det-gif exp report \
-	train show-rl train2 show-rl2 show-best show
+	train show-rl train2 show-rl2 show-best show map
 
 help:
 	@echo "Targets:"
@@ -31,6 +37,7 @@ help:
 	@echo "  train     - train MineEvacEnv PPO baseline"
 	@echo "  train2    - train two-responder RL policy"
 	@echo "  show      - regenerate RL visuals from logs/eval_episode.jsonl"
+	@echo "  map       - render the current layout JSON as a static preview"
 	@echo "  exp       - deterministic experiments on baseline/layout_A/layout_B"
 	@echo "  report    - summarise training/eval logs into logs/report.md"
 	@echo "  clean     - remove generated artifacts"
@@ -122,6 +129,10 @@ show:
 		--skip 1 \
 		--trail 80
 	@echo "Visuals updated: output/heatmap.png, output/sweep_anim.gif"
+
+map:
+	@echo "Rendering layout preview ($(LAYOUT_FILE))"
+	$(PYTHON) scripts/plot_layout.py --layout $(LAYOUT_FILE) --save $(MAP_FILE)
 
 report:
 	@echo "Generating Markdown report from logs"

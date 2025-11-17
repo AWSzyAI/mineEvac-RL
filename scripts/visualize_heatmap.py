@@ -40,7 +40,11 @@ def load_positions(path: str, state_filter: str = None):
             line = line.strip()
             if not line:
                 continue
-            data: Dict = json.loads(line)
+            try:
+                data: Dict = json.loads(line)
+            except Exception:
+                # Skip malformed JSON lines (robustness for mixed logs)
+                continue
 
             # 新版格式检测：有 'responder_pos'
             if 'responder_pos' in data:
@@ -124,6 +128,15 @@ def _draw_wall_rows(ax, layout: dict):
     door_xs = set(doors.get("xs", []))
     top_z = doors.get("topZ")
     bottom_z = doors.get("bottomZ")
+    # Fallback: derive from corridor if doors missing
+    if (top_z is None or bottom_z is None) and layout.get("corridor"):
+        corr = layout["corridor"]
+        z0 = int(corr.get("z", 0))
+        h = int(corr.get("h", 0))
+        if top_z is None:
+            top_z = z0 + h  # first row above corridor
+        if bottom_z is None:
+            bottom_z = z0 - 1  # last row below corridor
     wall_color = "#8B5A2B"
     if top_z is not None:
         for room in layout.get("rooms_top", []):
@@ -161,6 +174,15 @@ def _draw_room_perimeters(ax, layout: dict):
     doors = layout.get("doors", {})
     top_z = doors.get("topZ")
     bottom_z = doors.get("bottomZ")
+    # Fallback: derive from corridor if doors missing
+    if (top_z is None or bottom_z is None) and layout.get("corridor"):
+        corr = layout["corridor"]
+        z0 = int(corr.get("z", 0))
+        h = int(corr.get("h", 0))
+        if top_z is None:
+            top_z = z0 + h
+        if bottom_z is None:
+            bottom_z = z0 - 1
 
     def add_perimeter(room: dict, corridor_side_z: int):
         rx, rz, rw, rh = room["x"], room["z"], room["w"], room["h"]

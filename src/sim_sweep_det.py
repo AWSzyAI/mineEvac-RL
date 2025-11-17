@@ -206,6 +206,28 @@ class SweepSim:
         self._resp_stagnant: Dict[int, int] = {r.id: 0 for r in self.responders}
         # escort flag for timing mapping (set each step)
         self._escort_active: bool = False
+        # distance field cache (single-goal fields)
+        self._df_cache: Dict[Coord, np.ndarray] = {}
+        self._df_cache_order: List[Coord] = []
+
+    def get_distance_field(self, goal: Coord) -> np.ndarray:
+        """Return cached distance field for a single goal cell.
+
+        Avoids recomputing many identical D fields each step.
+        Simple FIFO eviction keeps memory bounded.
+        """
+        g = (int(goal[0]), int(goal[1]))
+        if g in self._df_cache:
+            return self._df_cache[g]
+        D = self.distance_field([g])
+        self._df_cache[g] = D
+        self._df_cache_order.append(g)
+        # Evict oldest if cache grows too large
+        if len(self._df_cache_order) > 256:
+            old = self._df_cache_order.pop(0)
+            if old in self._df_cache:
+                del self._df_cache[old]
+        return D
 
     def floor_of_z(self, z: int) -> int:
         """Infer logical floor index (1-based) from a global z coordinate."""
@@ -525,43 +547,18 @@ class SweepSim:
             # otherwise, head to the nearest room-side entry cell of a not-yet-self-cleared room (by reachable cost)
             if my_todo:
                 pos_cell = self.cell_of(resp.pos)
-                best = None
-                best_cost = None
+                # Use Euclidean heuristic to select nearest entry cell (avoids per-room distance_field calls)
+                best_entry = None
+                best_eucl = None
                 for room in my_todo:
-                    # room-side entry inside the room
-                    entry = self.room_door_corridor_cell(room)
-                    ex, ez = entry
-                    # if we are on the corridor side of a doorway, retarget to room-side interior cell
-                    for offset in self.floor_offsets:
-                        top_f = self.top_z + offset
-                        bot_f = self.bot_z + offset
-                        if ez == top_f - 1:
-                            entry = (ex, top_f)
-                            break
-                        if ez == bot_f + 1:
-                            entry = (ex, bot_f)
-                            break
-                    D = self.distance_field([entry])
-                    if not self.cell_in_bounds(pos_cell):
-                        continue
-                    cost = D[pos_cell[1]-self.z_min, pos_cell[0]-self.x_min]
-                    if not np.isfinite(cost):
-                        continue
-                    if best is None or cost < best_cost - 1e-6:
-                        best = entry
-                        best_cost = cost
-                if best is None:
-                    # fallback to straight-line heuristic if no reachable entry found
-                    def _cand(r):
-                        e = self.room_door_corridor_cell(r)
-                        ex, ez = e
-                        if ez == self.top_z - 1:
-                            e = (ex, self.top_z)
-                        elif ez == self.bot_z + 1:
-                            e = (ex, self.bot_z)
-                        return e
-                    best = min(((_cand(r), r) for r in my_todo), key=lambda t: np.hypot((t[0][0]+0.5)-resp.pos[0], (t[0][1]+0.5)-resp.pos[1]), default=(None, None))[0]
-                resp.target = best
+                    door_corr = self.room_door_corridor_cell(room)
+                    ex, _ = door_corr
+                    entry = (ex, room.z1 if room.is_top else room.z2)
+                    d = np.hypot(entry[0] - pos_cell[0], entry[1] - pos_cell[1])
+                    if best_entry is None or d < best_eucl - 1e-6:
+                        best_entry = entry
+                        best_eucl = d
+                resp.target = best_entry
             else:
                 # all rooms self-cleared -> return to nearest exit
                 cell = self.cell_of(resp.pos)
@@ -607,7 +604,7 @@ class SweepSim:
                     resp.pos = (nx + 0.5, nz + 0.5)
                 else:
                     # fallback: continuous step along distance field
-                    D = self.distance_field([goal])
+                    D = self.get_distance_field(goal)
                     resp.pos = self.step_along_field(resp.pos, D, step=1.0)
 
             # stagnation guard: if cell didn't change for many steps and not escorting, retarget next best entry
@@ -667,7 +664,7 @@ class SweepSim:
                     nx, nz = path[1]
                     o.pos = (nx + 0.5, nz + 0.5)
                 else:
-                    D = self.distance_field([tgt_cell])
+                    D = self.get_distance_field(tgt_cell)
                     o.pos = self.step_along_field(o.pos, D, step=1.0)
             # check evacuated
             if self.cell_of(o.pos) in self.exits:
@@ -815,6 +812,7 @@ def run_once(layout_path: str,
             snap0["eta_hms"] = _sec_to_hms(0.0)
             f.write(json.dumps(snap0, ensure_ascii=False) + "\n")
         print(f"[det] Simulation start: responders={num_responders}, per_room={per_room}, max_steps={max_steps}, seed={seed}", flush=True)
+        start_wall = time.time()
         if logger is not None:
             logger.write("=== Deterministic greedy sweep start ===\n")
             logger.write(f"layout={layout_path}\n")
@@ -848,7 +846,17 @@ def run_once(layout_path: str,
                 evac = sum(1 for o in sim.occupants if o.evacuated)
                 unswept = sum(1 for r in sim.rooms if not sim.room_swept[r.id])
                 rpos = ", ".join([f"({r.pos[0]:.2f},{r.pos[1]:.2f})" for r in sim.responders])
-                print(f"[det] t={sim.t:4d} | evac={evac}/{len(sim.occupants)} | unswept_rooms={unswept} | responders={rpos}", flush=True)
+                wall_elapsed = time.time() - start_wall
+                progress = sim.t / max_steps if max_steps > 0 else 0.0
+                eta_wall = wall_elapsed / progress - wall_elapsed if progress > 0 else 0.0
+                eta_hms = _sec_to_hms(eta_wall)
+                wall_hms = _sec_to_hms(wall_elapsed)
+                sim_hms = _sec_to_hms(real_seconds)
+                pct = progress * 100.0
+                print(
+                    f"[det] t={sim.t:4d} ({pct:5.1f}%) | evac={evac}/{len(sim.occupants)} | unswept={unswept} | real_sim={sim_hms} | wall={wall_hms} | ETA={eta_hms}",
+                    flush=True,
+                )
             if logger is not None:
                 logger.write(f"[t={sim.t}] step\n")
                 cur_resp = [tuple(r.pos) for r in sim.responders]
@@ -892,6 +900,7 @@ def run_once(layout_path: str,
         "evacuated": sum(1 for o in sim.occupants if o.evacuated),
         "real_hms": _sec_to_hms(real_seconds),
         "real_minutes": round(real_seconds / 60.0, 2),
+        "wall_seconds": round(time.time() - start_wall, 2),
         "cell_m": cell_m,
         "speed_solo_mps": speed_solo,
         "speed_escort_mps": speed_escort,

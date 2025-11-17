@@ -9,12 +9,12 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import concurrent.futures
+from functools import partial
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 import sys
-import concurrent.futures
-from functools import partial
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -37,6 +37,10 @@ LAYOUT_MAP: Dict[str, str] = {
     "T": "layout/layout_A.json",
     "L": "layout/layout_B.json",
 }
+
+# Canonical key for a parameter combination
+# (layout_label, floors, per_room, responders)
+ComboKey = Tuple[str, int, int, int]
 
 
 def _parse_range(spec: str) -> List[int]:
@@ -80,6 +84,29 @@ def _parse_layouts(spec: str) -> List[Tuple[str, str]]:
         else:
             pairs.append((label.upper(), path))
     return pairs
+
+
+def _record_to_key(record: Dict[str, Any]) -> ComboKey | None:
+    """Extract a canonical ComboKey from any record dict (JSONL/summary)."""
+
+    layout_label = record.get("layout_label") or record.get("layout")
+    if layout_label is None:
+        return None
+    # normalise label for robustness
+    layout_label = str(layout_label).upper()
+
+    floors_raw = record.get("floors") or record.get("floor") or 1
+    per_room_raw = record.get("per_room")
+    responders_raw = record.get("responders")
+    if per_room_raw is None or responders_raw is None:
+        return None
+    try:
+        floors = int(floors_raw)
+        per_room = int(per_room_raw)
+        responders = int(responders_raw)
+    except (TypeError, ValueError):
+        return None
+    return (layout_label, floors, per_room, responders)
 
 
 def _run_single(
@@ -131,10 +158,14 @@ def main(argv: List[str] | None = None) -> None:
     out_root.mkdir(parents=True, exist_ok=True)
 
     jsonl_path = out_root / "det_batch.jsonl"
+    summary_json_path = out_root / "summary.json"
+    summary_csv_path = out_root / "summary.csv"
 
     # --- checkpoint: load existing results (if any) ---------------------------
     existing_results: List[Dict[str, Any]] = []
-    existing_keys = set()
+    existing_keys: set[ComboKey] = set()
+
+    # 1) primary checkpoint: JSONL with full run_once results
     if jsonl_path.exists():
         with open(jsonl_path, "r", encoding="utf-8") as jf:
             for line in jf:
@@ -145,24 +176,48 @@ def main(argv: List[str] | None = None) -> None:
                     res = json.loads(line)
                 except Exception:
                     continue
-                layout_label = res.get("layout_label")
-                layout_path = res.get("layout") or res.get("layout_path")
-                floor = res.get("floors") or res.get("floor") or 1
-                per_room = res.get("per_room")
-                responders = res.get("responders")
-                max_steps_existing = res.get("max_steps")
-                key = (layout_label, layout_path, floor, per_room, responders, max_steps_existing)
-                existing_keys.add(key)
+                key = _record_to_key(res)
+                if key is not None:
+                    existing_keys.add(key)
                 existing_results.append(res)
+
+    # 2) secondary checkpoint: summary.json (if present)
+    if summary_json_path.exists():
+        try:
+            with open(summary_json_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                for rec in data:
+                    if isinstance(rec, dict):
+                        key = _record_to_key(rec)
+                        if key is not None:
+                            existing_keys.add(key)
+        except Exception:
+            # summary.json is purely a helper; ignore if malformed
+            pass
+
+    # 3) secondary checkpoint: summary.csv (if present)
+    if summary_csv_path.exists():
+        try:
+            with open(summary_csv_path, "r", encoding="utf-8") as cf:
+                reader = csv.DictReader(cf)
+                for row in reader:
+                    key = _record_to_key(row)
+                    if key is not None:
+                        existing_keys.add(key)
+        except Exception:
+            # summary.csv is purely a helper; ignore if malformed
+            pass
 
     # --- build full task grid ------------------------------------------------
     tasks: List[Tuple[str, str, int, int, int, int]] = []
     for layout_label, layout_path in layout_pairs:
-        for floor in floors:
+        norm_label = layout_label.upper()
+        for responders in resp_values:
             for per_room in occ_values:
-                for responders in resp_values:
-                    key = (layout_label, layout_path, floor, per_room, responders, args.max_steps)
-                    if key in existing_keys:
+                for floor in floors:
+                    combo_key = (norm_label, floor, per_room, responders)
+                    if combo_key in existing_keys:
                         continue
                     tasks.append((layout_label, layout_path, floor, per_room, responders, args.max_steps))
 

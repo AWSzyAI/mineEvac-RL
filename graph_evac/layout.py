@@ -42,7 +42,12 @@ def load_layout(path: str) -> Tuple[List[Dict], List[Dict], List[Dict], List[Dic
         exits = [
             {
                 "id": ex.get("id", f"E{idx}"),
-                "coord": tuple(ex.get("coord", (0.0, 0.0, 0.0))),
+                # Support both {coord:[x,z]} and legacy {position:[x,z]}
+                "coord": tuple(
+                    ex.get("coord")
+                    or ex.get("position")
+                    or (0.0, 0.0, 0.0)
+                ),
             }
             for idx, ex in enumerate(exit_defs)
         ]

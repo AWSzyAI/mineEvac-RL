@@ -1,0 +1,49 @@
+{
+	"name": "hospital_inpatient",
+	"frame": { "x1": 0, "z1": 0, "x2": 120, "z2": 70 },
+
+	"corridor": { "x": 0, "z": 30, "w": 120, "h": 10 },
+
+	"rooms_top": [
+		{ "id": "EO_OBS", "x": 0,  "z": 40, "w": 28, "h": 20, "block": "brown_wool", "occupants": 6 },
+		{ "id": "STORAGE", "x": 28, "z": 40, "w": 10, "h": 12, "block": "gray_wool", "occupants": 0 },
+		{ "id": "SOLID_UTIL_TOP", "x": 38, "z": 40, "w": 10, "h": 12, "block": "light_gray_wool", "occupants": 0 },
+		{ "id": "CRITICAL_LEFT", "x": 48, "z": 40, "w": 24, "h": 20, "block": "blue_wool", "occupants": 8 },
+		{ "id": "CRITICAL_RIGHT", "x": 72, "z": 40, "w": 24, "h": 20, "block": "blue_wool", "occupants": 8 },
+		{ "id": "PATIENT_CHAIRS", "x": 50, "z": 42, "w": 20, "h": 16, "block": "white_wool", "occupants": 6 },
+		{ "id": "MED_STORAGE", "x": 96, "z": 40, "w": 24, "h": 20, "block": "lime_wool", "occupants": 0 }
+	],
+
+	"rooms_bottom": [
+		{ "id": "WAITING", "x": 0,  "z": 5, "w": 40, "h": 20, "block": "orange_wool", "occupants": 10 },
+		{ "id": "REGISTRATION", "x": 40, "z": 5, "w": 20, "h": 12, "block": "yellow_wool", "occupants": 4 },
+		{ "id": "TRIAGE", "x": 60, "z": 5, "w": 18, "h": 12, "block": "orange_wool", "occupants": 4 },
+		{ "id": "STAFF_LOUNGE", "x": 78, "z": 5, "w": 14, "h": 12, "block": "green_wool", "occupants": 4 },
+		{ "id": "SOLID_UTIL_BOTTOM", "x": 92, "z": 5, "w": 14, "h": 12, "block": "light_gray_wool", "occupants": 0 }
+	],
+
+	"doors": {
+		"topZ": 40,
+		"bottomZ": 29,
+		"xs": [14, 34, 52, 66, 84, 104]
+	},
+
+	"exits": [
+		{ "id": "E_LEFT",  "coord": [0, 35] },
+		{ "id": "E_RIGHT", "coord": [120, 35] },
+		{ "id": "E_BOTTOM_LEFT", "coord": [20, 30] },
+		{ "id": "E_BOTTOM_RIGHT", "coord": [100, 30] }
+	],
+
+	"wall": { "material": "white_concrete", "height": 3 },
+	"corridor_floor": "white_concrete",
+	"exit_marker": "green_wool",
+
+	"_notes": {
+		"source": "Approximation of inpatient hospital layout diagram.",
+		"simplifications": "Irregular angled walls flattened to rectangles; patient chair zone treated as a room; extra bottom exits approximate ambulatory entrances.",
+		"coord_system": "x rightwards, z upwards from bottom of plan; corridor spans z=30..39; top rooms begin at z>=40; bottom rooms occupy z=5..24.",
+		"doors_logic": "doors.xs are doorway centers along corridor-facing walls at topZ/bottomZ; adjust for more precise geometry as needed.",
+		"tuning": "Adjust room rectangles & occupants to match real bed/chair counts if necessary."
+	}
+}

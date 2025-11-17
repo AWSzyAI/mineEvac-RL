@@ -387,3 +387,36 @@ make clean
 FLOORS=2 make run ALGO=greedy LAYOUT_FILE=layout/baseline.json RESPONDERS=2 PER_ROOM=5
 FLOORS=2 RESPONDERS=2 PER_ROOM=5 LAYOUT_FILE=layout/baseline.json make det-gif
 ```
+# 生成一次旧版确定性仿真帧（依赖 src/sim_sweep_det.py 的环境）
+# 如依赖较重，可跳过这步，直接用已有 logs 试绘
+make det LAYOUT_FILE=layout/school_layout.json RESPONDERS=2 PER_ROOM=10 FLOORS=1
+
+# 用 heatmap 绘制，墙体可见
+python3 scripts/visualize_heatmap.py \
+  --path output/greedy_school_layout_res2_per10_floors1/logs/det_eval_episode.jsonl \
+  --layout layout/school_layout.json \
+  --entity responder \
+  --bins 80 \
+  --save output/heatmap_school.png
+
+python3 scripts/visualize_heatmap.py \
+  --path logs/det_eval_episode.jsonl \
+  --layout layout/hospital_inpatient.json \
+  --entity responder \
+  --bins 80 \
+  --save output/hospital_inpatient_heatmap.png
+
+# 建议放到 logs/ 下，先建目录
+mkdir -p logs
+
+# 运行一次 deterministic 仿真，生成帧文件
+python3 src/sim_sweep_det.py \
+  --layout layout/hospital_inpatient.json \
+  --responders 2 \
+  --per_room 5 \
+  --max_steps 3000 \
+  --floors 1 \
+  --frames logs/det_eval_episode.jsonl \
+  --save logs/hospital_inpatient_result.json \
+  --delay 0.0 \
+  --log-every 100
